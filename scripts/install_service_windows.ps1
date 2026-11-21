@@ -47,7 +47,19 @@ try {
     Write-Warning "Gagal mendaftarkan Task Scheduler (butuh Run as Administrator): $_"
 }
 
-# 3. Jalankan sekarang di background secara terlepas (Detached / Hidden)
+# 3. Konfigurasi Power Settings (Agar perangkat tidak Sleep saat idle, tetapi layar tetap boleh mati)
+try {
+    Write-Host "==> Menyetel pengaturan daya agar sistem tidak sleep saat tersambung charger/listrik..."
+    powercfg /change standby-timeout-ac 0
+    powercfg /change monitor-timeout-ac 10
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+    powercfg /setactive SCHEME_CURRENT
+    Write-Host "✅ Pengaturan daya: Standby AC = Never, Monitor = 10m, Lid Close = Do Nothing."
+} catch {
+    Write-Warning "Gagal mengonfigurasi powercfg: $_"
+}
+
+# 4. Jalankan sekarang di background secara terlepas (Detached / Hidden)
 Write-Host "==> Menjalankan daemon di background (tersembunyi)..."
 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$VbsPath`""
 

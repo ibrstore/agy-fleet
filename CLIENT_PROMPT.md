@@ -18,12 +18,13 @@ Tugasmu adalah menyiapkan agy-fleet daemon di mesin ini agar terhubung ke Contro
 Parameter Node ini:
 - NODE_ID: "<NAMA_NODE>" (pilihan: pc-naufal | pc-diba | lap-asus | lap-user | pc-nci)
 - NATS_URL: "nats://100.66.49.13:4222"
+- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
 
 Instruksi Eksekusi:
-1. Pastikan koneksi Tailscale ke VPS aktif (tes ping ke <IP_TAILSCALE_VPS>).
+1. Pastikan koneksi Tailscale ke VPS aktif (tes ping ke 100.66.49.13).
 2. Clone repository agy-fleet ke folder lokal:
-   - Linux/macOS: git clone <URL_REPO_PRIVAT> ~/agy-fleet
-   - Windows: git clone <URL_REPO_PRIVAT> $HOME\agy-fleet
+   - Linux/macOS: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
+   - Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
 3. Masuk ke direktori agy-fleet dan siapkan environment:
    - Buat virtualenv Python 3.11+: python -m venv .venv
    - Aktifkan virtualenv dan install dependensi: pip install -e .
@@ -31,12 +32,12 @@ Instruksi Eksekusi:
    {
      "node_id": "<NAMA_NODE>",
      "device_type": "<pc atau laptop>",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
+     "nats_url": "nats://100.66.49.13:4222"
    }
-5. Daftarkan dan jalankan daemon sebagai background service:
+5. Daftarkan dan jalankan daemon sebagai background service serta optimalkan power setting (never sleep on AC):
+   - Di Windows (PowerShell): .\scripts\install_service_windows.ps1 -NodeId "<NAMA_NODE>"
    - Di Linux: ./scripts/install_service_linux.sh daemon <NAMA_NODE>
    - Di macOS: ./scripts/install_service_macos.sh <NAMA_NODE>
-   - Di Windows (PowerShell Administrator): .\scripts\install_service_windows.ps1 -NodeId "<NAMA_NODE>"
 6. Verifikasi bahwa service aktif dan mengirim heartbeat 5 detik ke NATS.
 
 CATATAN KEAMANAN:

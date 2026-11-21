@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from nats.js.kv import KeyValue
 from shared.config import FLEET_NODES, HEARTBEAT_TTL_SEC
@@ -65,7 +65,8 @@ class PresenceMonitor:
 
     def format_dashboard_text(self) -> str:
         """Format live dashboard text for Telegram."""
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        wib = timezone(timedelta(hours=7))
+        now_str = datetime.now(wib).strftime("%Y-%m-%d %H:%M:%S WIB")
         online_count = len(self.get_online_nodes())
         lines = [
             "🛰️ *FLEET DASHBOARD (LIVE PRESENCE)*",
