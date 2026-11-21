@@ -299,36 +299,44 @@ class FleetCoordinator:
         target_nodes, cleaned_prompt = self._parse_target_nodes(user_prompt)
         await self.presence.update_presence()
 
+        # If user only typed tags like "@online", "@all", or node name with no prompt, show Dashboard
+        if not cleaned_prompt:
+            dashboard_text = self.presence.format_dashboard_text()
+            await message.reply(dashboard_text, parse_mode="Markdown")
+            return
+
         project_id = str(message.message_thread_id or message.chat.id)
 
         # Single progress message auto-edited during execution
         prog_msg = await message.reply("⏳ _Memproses permintaan dalam mode CONSULT (Read-Only Fact Gathering)..._")
 
         try:
-            # 1. Gather live node facts
+            # 1. Gather live node facts in parallel
             online_nodes = self.presence.get_online_nodes()
             offline_nodes = [n for n in FLEET_NODES if n not in online_nodes]
             presence_context = f"ONLINE: {', '.join(online_nodes)} | OFFLINE: {', '.join(offline_nodes)}"
 
-            facts_collected = {}
-            for node_id in target_nodes:
-                if not self.presence.is_node_online(node_id):
-                    facts_collected[node_id] = {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
-                    continue
+            diag_cmd = self._guess_diagnostic_cmd(cleaned_prompt)
 
-                # Query node via NATS consult subject (enforcing read-only diagnostics)
+            async def query_node(node_id: str) -> Tuple[str, Dict[str, Any]]:
+                if not self.presence.is_node_online(node_id):
+                    return node_id, {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
+
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
                 req_data = {
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
-                    "command": self._guess_diagnostic_cmd(cleaned_prompt),
-                    "timeout_sec": 30
+                    "command": diag_cmd,
+                    "timeout_sec": 60
                 }
                 try:
-                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=35.0)
+                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=65.0)
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
-                    facts_collected[node_id] = resp_data
+                    return node_id, resp_data
                 except Exception as e:
-                    facts_collected[node_id] = {"status": "ERROR", "error": str(e)}
+                    return node_id, {"status": "ERROR", "error": str(e)}
+
+            node_results = await asyncio.gather(*[query_node(nid) for nid in target_nodes])
+            facts_collected = dict(node_results)
 
             # 2. Check if the prompt / gathered facts indicate need for system modification
             needs_action, proposal = self._detect_modification_intent(cleaned_prompt, facts_collected)
