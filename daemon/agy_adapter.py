@@ -161,6 +161,8 @@ class AgyAdapter:
                             "conversation_id": data.get("conversation_id", ""),
                             "response": data.get("response", ""),
                             "error": data.get("error", ""),
+                            "num_turns": data.get("num_turns", 1),
+                            "usage": data.get("usage", {}),
                             "raw_output": text
                         }
                 except json.JSONDecodeError:

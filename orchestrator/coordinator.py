@@ -42,6 +42,7 @@ from orchestrator.turn_lock import TurnLockManager
 from orchestrator.queue import PerNodeTaskQueue
 from orchestrator.manifest_manager import ManifestManager
 from orchestrator.dlp_filter import TelegramDLPFilter
+from orchestrator.conversations import ConversationManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("fleet-orchestrator")
@@ -58,6 +59,7 @@ class FleetCoordinator:
         self.queue = PerNodeTaskQueue()
         self.manifest_mgr = ManifestManager()
         self.dlp = TelegramDLPFilter()
+        self.conv_mgr = ConversationManager()
         self.is_running = False
 
     async def initialize(self) -> None:
@@ -109,6 +111,7 @@ class FleetCoordinator:
         self.dp.message.register(self._cmd_update, Command("update"))
         self.dp.message.register(self._cmd_dashboard, Command("dashboard"))
         self.dp.message.register(self._cmd_getfile, Command("file", "getfile"))
+        self.dp.message.register(self._cmd_new_conversation, Command("new", "reset"))
 
         # Callback query handlers for Inline Manifest Approval
         self.dp.callback_query.register(self._handle_manifest_approval, F.data.startswith("man:app:"))
@@ -254,6 +257,25 @@ class FleetCoordinator:
                 topic_id=message.message_thread_id
             )
 
+    async def _cmd_new_conversation(self, message: Message):
+        """Reset conversation session for specified node or all nodes."""
+        args = message.text.split()[1:] if message.text else []
+        target = args[0].strip().lower().replace("@", "") if args else "@online"
+
+        if target in ["all", "@all", "semua"]:
+            self.conv_mgr.reset_all()
+            await message.reply("🔄 *Semua sesi percakapan perangkat telah di-reset ke sesi baru.*", parse_mode="Markdown")
+        elif target in ["online", "@online"]:
+            online = self.presence.get_online_nodes()
+            for nid in online:
+                self.conv_mgr.reset(nid)
+            nodes_str = ", ".join(online) if online else "tidak ada"
+            await message.reply(f"🔄 *Sesi percakapan pada node online ({nodes_str}) telah di-reset ke sesi baru.*", parse_mode="Markdown")
+        else:
+            canonical = NODE_ALIASES.get(target, target)
+            self.conv_mgr.reset(canonical)
+            await message.reply(f"🔄 *Sesi percakapan pada `{canonical}` telah di-reset ke sesi baru.*", parse_mode="Markdown")
+
     async def _safe_edit_message(self, message: Message, text: str, reply_markup=None) -> None:
         """Safely edit a message, falling back to plain text if Telegram fails parsing entities."""
         try:
@@ -360,14 +382,28 @@ class FleetCoordinator:
                     return node_id, {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
 
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
+                active_conv_id = self.conv_mgr.get_conversation_id(node_id)
                 req_data = {
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
                     "command": diag_cmd,
+                    "conversation_id": active_conv_id,
                     "timeout_sec": 60
                 }
                 try:
                     resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=65.0)
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
+
+                    # Record conversation turn and check if rotation needed
+                    agy_info = resp_data.get("agy", {})
+                    conv_id = agy_info.get("conversation_id")
+                    if conv_id:
+                        turns = agy_info.get("num_turns", 1)
+                        usage = agy_info.get("usage", {})
+                        tokens = usage.get("total_tokens", 0)
+                        rotated = self.conv_mgr.record_turn(node_id, conv_id, turns, tokens)
+                        resp_data["_rotated"] = rotated
+                        resp_data["_conv_info"] = self.conv_mgr.get_info(node_id)
+
                     return node_id, resp_data
                 except Exception as e:
                     return node_id, {"status": "ERROR", "error": str(e)}
@@ -405,13 +441,23 @@ class FleetCoordinator:
                     if "stdout" in res and res["stdout"]:
                         summary_lines.append(f"🖥️ *Node `{nid}`:*\n```\n{res['stdout'][:800]}\n```")
                     elif agy_info.get("response"):
-                        summary_lines.append(f"🤖 *Node `{nid}`:*\n{agy_info['response'].strip()}")
+                        ans = agy_info['response'].strip()
+                        conv_info = res.get("_conv_info")
+                        footer = ""
+                        if conv_info:
+                            turn_c = conv_info.get("turn_count", 1)
+                            tok = conv_info.get("total_tokens", 0)
+                            footer = f"\n\n_💬 Sesi `{nid}`: Turn {turn_c}/{self.conv_mgr.max_turns} | ~{tok//1000}k tokens_"
+                        summary_lines.append(f"🤖 *Node `{nid}`:*\n{ans}{footer}")
                     elif agy_info.get("error"):
                         summary_lines.append(f"⚠️ *Node `{nid}` error:* `{agy_info['error']}`")
                     elif "error" in res:
                         summary_lines.append(f"⚠️ *Node `{nid}`:* {res['error']}")
                     else:
                         summary_lines.append(f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks).")
+
+                    if res.get("_rotated"):
+                        summary_lines.append(f"🔄 _Konteks percakapan di `{nid}` telah penuh/berat dan di-refresh otomatis untuk menjaga kecepatan respons._")
 
                 full_text = "\n\n".join(summary_lines)
                 display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
