@@ -28,11 +28,11 @@ class TelegramDLPFilter:
         topic_id: Optional[int] = None,
         reply_to_message_id: Optional[int] = None,
         parse_mode: Optional[str] = "Markdown",
-        filename_prefix: str = "fleet_log"
+        filename_prefix: str = "fleet_doc"
     ):
         """
         Sends message to Telegram. If text exceeds 3,500 chars, sends the preview
-        and attaches full redacted log as a .txt document file.
+        and attaches full redacted log as a .md document file.
         """
         display_text, exceeds, full_redacted = self.sanitize_text(text)
 
@@ -49,13 +49,13 @@ class TelegramDLPFilter:
         sent_msg = await bot.send_message(**send_kwargs)
 
         if exceeds:
-            # Attach full text as a .txt document
+            # Attach full text as a .md document
             file_bytes = full_redacted.encode("utf-8")
-            doc = BufferedInputFile(file_bytes, filename=f"{filename_prefix}.txt")
+            doc = BufferedInputFile(file_bytes, filename=f"{filename_prefix}.md")
             doc_kwargs = {
                 "chat_id": chat_id,
                 "document": doc,
-                "caption": "📄 Full raw log output (DLP-sanitized)",
+                "caption": "📄 Dokumen lengkap (DLP-sanitized)",
                 "message_thread_id": topic_id,
                 "reply_to_message_id": sent_msg.message_id
             }

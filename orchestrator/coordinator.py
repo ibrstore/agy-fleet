@@ -276,15 +276,34 @@ class FleetCoordinator:
             self.conv_mgr.reset(canonical)
             await message.reply(f"🔄 *Sesi percakapan pada `{canonical}` telah di-reset ke sesi baru.*", parse_mode="Markdown")
 
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        """Removes raw markdown formatting tokens for clean plain text display."""
+        t = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+        t = re.sub(r"\*([^*]+)\*", r"\1", t)
+        t = re.sub(r"_([^_]+)_", r"\1", t)
+        t = re.sub(r"`([^`]+)`", r"\1", t)
+        t = re.sub(r"```[a-zA-Z]*\n?([\s\S]*?)```", r"\1", t)
+        return t
+
     async def _safe_edit_message(self, message: Message, text: str, reply_markup=None) -> None:
-        """Safely edit a message, falling back to plain text if Telegram fails parsing entities."""
+        """Safely edit a message, falling back to clean plain text if Telegram fails parsing entities."""
         try:
             await message.edit_text(text, parse_mode="Markdown", reply_markup=reply_markup)
         except Exception as e:
-            logger.warning(f"Markdown edit failed ({e}). Retrying with plain text.")
+            err_msg = str(e).lower()
+            if "message is not modified" in err_msg:
+                # Text didn't change, normal during progressive stream finish
+                return
+            logger.warning(f"Markdown edit failed ({e}). Retrying with sanitized plain text.")
             try:
-                await message.edit_text(text, parse_mode=None, reply_markup=reply_markup)
+                clean_text = self._strip_markdown(text)
+                await message.edit_text(clean_text, parse_mode=None, reply_markup=reply_markup)
             except Exception as e2:
+                err_msg2 = str(e2).lower()
+                if "message is not modified" in err_msg2:
+                    return
                 logger.error(f"Failed to edit message with plain text: {e2}")
 
     # ---------------- Tagging & Chat Handling ----------------
@@ -295,6 +314,7 @@ class FleetCoordinator:
         "@pc-naufal: cek ram" -> (["pc-naufal"], "cek ram")
         "@naufal halo apa kabar?" -> (["pc-naufal"], "halo apa kabar?")
         "@pc-naufal, @pc-diba: halo" -> (["pc-naufal", "pc-diba"], "halo")
+        "@pc-diba lalu @vps: halo" -> (["pc-diba", "vps"], "halo")
         "@online: cek ram" -> (online_nodes, "cek ram")
         "@all: status" -> (all_nodes, "status")
         "vps: cek disk" -> (["vps"], "cek disk")
@@ -315,12 +335,28 @@ class FleetCoordinator:
             online = self.presence.get_online_nodes()
             return (online if online else ["vps"]), m_online.group(1).strip()
 
-        # Check for leading node tags (e.g. @pc-naufal, @naufal, pc-naufal:, @pc-diba)
+        CONNECTORS = {"lalu", "kemudian", "dan", "terus", "ke", "->", "=>", "&", "setelah", "itu", "next"}
+
+        # Check for leading node tags (e.g. @pc-naufal, @naufal, pc-naufal:, @pc-diba, @pc-diba lalu @vps)
         words = clean_text.split()
         found_nodes = []
         idx = 0
         while idx < len(words):
-            w = words[idx].strip(",;:").lower()
+            raw_w = words[idx]
+            w = raw_w.strip(",;:").lower()
+            if w in CONNECTORS and found_nodes:
+                # check if there is a fleet node ahead
+                peek = idx + 1
+                while peek < len(words) and words[peek].strip(",;:").lower() in CONNECTORS:
+                    peek += 1
+                if peek < len(words):
+                    next_cand = words[peek].strip(",;:").lower()
+                    next_cand = next_cand[1:] if next_cand.startswith("@") else next_cand
+                    if NODE_ALIASES.get(next_cand, next_cand) in FLEET_NODES:
+                        idx = peek
+                        continue
+                break
+
             candidate = w[1:] if w.startswith("@") else w
             canonical = NODE_ALIASES.get(candidate, candidate)
             if canonical in FLEET_NODES:
@@ -412,7 +448,7 @@ class FleetCoordinator:
                 except Exception as e:
                     return node_id, {"status": "ERROR", "error": str(e)}
 
-            is_chain = self._is_chain_request(cleaned_prompt, target_nodes)
+            is_chain = self._is_chain_request(cleaned_prompt, target_nodes, raw_text=user_prompt)
 
             if is_chain:
                 # ----------------- REKOMENDASI 2: SEQUENTIAL CHAIN-OF-THOUGHT -----------------
@@ -461,14 +497,18 @@ class FleetCoordinator:
                 display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
                 await self._safe_edit_message(prog_msg, display_text)
                 if exceeds:
-                    doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
-                    await self.bot.send_document(
-                        chat_id=message.chat.id,
-                        document=doc,
-                        caption="📄 *Dokumen Lengkap Diskusi Berantai (.md)*",
-                        message_thread_id=message.message_thread_id,
-                        reply_to_message_id=prog_msg.message_id
-                    )
+                    try:
+                        doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
+                        await self.bot.send_document(
+                            chat_id=message.chat.id,
+                            document=doc,
+                            caption="📄 *Dokumen Lengkap Diskusi Berantai (.md)*",
+                            parse_mode="Markdown",
+                            message_thread_id=message.message_thread_id,
+                            reply_to_message_id=prog_msg.message_id
+                        )
+                    except Exception as doc_err:
+                        logger.error(f"Failed to send chain markdown document: {doc_err}")
 
             else:
                 # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
@@ -488,14 +528,18 @@ class FleetCoordinator:
                         display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
                         await self._safe_edit_message(prog_msg, display_text)
                         if is_final and exceeds:
-                            doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
-                            await self.bot.send_document(
-                                chat_id=message.chat.id,
-                                document=doc,
-                                caption="📄 *Dokumen Lengkap Hasil Konsultasi (.md)*",
-                                message_thread_id=message.message_thread_id,
-                                reply_to_message_id=prog_msg.message_id
-                            )
+                            try:
+                                doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
+                                await self.bot.send_document(
+                                    chat_id=message.chat.id,
+                                    document=doc,
+                                    caption="📄 *Dokumen Lengkap Hasil Konsultasi (.md)*",
+                                    parse_mode="Markdown",
+                                    message_thread_id=message.message_thread_id,
+                                    reply_to_message_id=prog_msg.message_id
+                                )
+                            except Exception as doc_err:
+                                logger.error(f"Failed to send markdown document: {doc_err}")
 
                 async def run_single_node(nid: str):
                     res = await query_node(nid)
@@ -577,15 +621,15 @@ class FleetCoordinator:
         else:
             return f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks)."
 
-    def _is_chain_request(self, prompt: str, target_nodes: List[str]) -> bool:
+    def _is_chain_request(self, prompt: str, target_nodes: List[str], raw_text: str = "") -> bool:
         """Determines if query requests a sequential chain between multiple nodes."""
         if len(target_nodes) < 2:
             return False
-        p = prompt.lower()
-        if "/chain" in p or "->" in prompt:
+        combined = f"{raw_text} {prompt}".lower()
+        if "/chain" in combined or "->" in combined or "=>" in combined:
             return True
         chain_keywords = ["lalu", "kemudian", "setelah itu", "lanjut ke", "berikutnya", "tanggapi"]
-        return any(k in p for k in chain_keywords)
+        return any(k in combined for k in chain_keywords)
 
     def _guess_diagnostic_cmd(self, prompt: str, node_id: str = "vps") -> Optional[str]:
         """Disabled: all conversational queries pass directly to Antigravity AI for intelligent responses."""

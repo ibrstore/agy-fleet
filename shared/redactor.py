@@ -69,9 +69,22 @@ class Redactor:
         if len(full_redacted) <= max_len:
             return full_redacted, False, full_redacted
 
-        truncated_preview = full_redacted[:max_len - 200]
+        # Find clean boundary (newline or whitespace) near max_len - 250
+        target_cutoff = max_len - 250
+        cut_idx = full_redacted.rfind("\n", 0, target_cutoff)
+        if cut_idx < target_cutoff // 2:
+            cut_idx = full_redacted.rfind(" ", 0, target_cutoff)
+            if cut_idx < target_cutoff // 2:
+                cut_idx = target_cutoff
+
+        truncated_preview = full_redacted[:cut_idx].rstrip()
+
+        # Close unclosed code fences to prevent Markdown syntax error
+        if truncated_preview.count("```") % 2 != 0:
+            truncated_preview += "\n```"
+
         truncated_display = (
             f"{truncated_preview}\n\n"
-            f"⚠️ *[Output dipotong karena melebihi {max_len} karakter. Log lengkap dilampirkan sebagai file .txt]*"
+            f"📄 *[Output dipotong karena melebihi batas {max_len} karakter. Dokumen lengkap dilampirkan sebagai file .md]*"
         )
         return truncated_display, True, full_redacted
