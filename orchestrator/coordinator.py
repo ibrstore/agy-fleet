@@ -500,13 +500,14 @@ class FleetCoordinator:
 
     def _detect_modification_intent(self, prompt: str, facts: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
-        Determines if request requires system mutation (install, restart, create, delete).
-        If so, creates proposed plan / manifest nodes.
+        Determines if request requires system mutation.
+        Only triggers for explicit command prefixes like /deploy or /exec, never hijacking general discussions.
         """
-        p = prompt.lower()
-        keywords = ["install", "update", "pasang", "restart", "jalankan", "hapus", "buat", "start", "stop service"]
-        if not any(k in p for k in keywords):
+        p = prompt.strip().lower()
+        if not (p.startswith("/deploy") or p.startswith("/exec") or p.startswith("/manifest")):
             return False, None
+
+        keywords = ["install", "update", "pasang", "restart", "jalankan", "hapus", "buat", "start", "stop service"]
 
         # Build proposed command steps per node
         nodes_manifest: Dict[str, NodeManifest] = {}
