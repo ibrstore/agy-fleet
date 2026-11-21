@@ -47,7 +47,24 @@ try {
     Write-Warning "Gagal mendaftarkan Task Scheduler (butuh Run as Administrator): $_"
 }
 
-# 3. Konfigurasi Power Settings (Agar perangkat tidak Sleep saat idle, tetapi layar tetap boleh mati)
+# 3. Pasang Shortcut Redundan di Folder Startup Pengguna (Jaminan Auto-Start saat Login)
+try {
+    $StartupFolder = [Environment]::GetFolderPath("Startup")
+    $ShortcutPath = Join-Path $StartupFolder "AntigravityFleetDaemon.lnk"
+    $WshShell = New-Object -ComObject WScript.Shell
+    $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+    $Shortcut.TargetPath = "wscript.exe"
+    $Shortcut.Arguments = "`"$VbsPath`""
+    $Shortcut.WorkingDirectory = $RepoDir
+    $Shortcut.WindowStyle = 7
+    $Shortcut.Description = "Auto-start Antigravity Fleet Daemon"
+    $Shortcut.Save()
+    Write-Host "✅ Shortcut fail-safe berhasil dipasang di folder Startup Windows."
+} catch {
+    Write-Warning "Gagal memasang shortcut di folder startup: $_"
+}
+
+# 4. Konfigurasi Power Settings (Agar perangkat tidak Sleep saat idle, tetapi layar tetap boleh mati)
 try {
     Write-Host "==> Menyetel pengaturan daya agar sistem tidak sleep saat tersambung charger/listrik..."
     powercfg /change standby-timeout-ac 0

@@ -12,6 +12,7 @@ import signal
 import socket
 import sys
 import time
+from pathlib import Path
 from typing import Optional, Set
 import nats
 from nats.aio.client import Client as NATSClient
@@ -279,33 +280,87 @@ class FleetDaemon:
 
     async def stop(self) -> None:
         self.is_running = False
-        if self.nc:
-            await self.nc.drain()
-            await self.nc.close()
+        if self.nc and not self.nc.is_closed:
+            try:
+                await asyncio.wait_for(self.nc.drain(), timeout=2.0)
+            except Exception:
+                pass
+            try:
+                await self.nc.close()
+            except Exception:
+                pass
         logger.info("Daemon stopped.")
+
+
+def _acquire_pid_lock(node_id: str) -> bool:
+    """Ensure only one daemon instance runs per node."""
+    pid_dir = Path.home() / ".agy-fleet"
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = pid_dir / f"daemon_{node_id}.pid"
+    my_pid = os.getpid()
+
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            if old_pid != my_pid and psutil.pid_exists(old_pid):
+                proc = psutil.Process(old_pid)
+                if "python" in proc.name().lower():
+                    logger.warning(f"Daemon for node '{node_id}' is already running with PID {old_pid}. Exiting.")
+                    return False
+        except Exception:
+            pass
+
+    pid_file.write_text(str(my_pid))
+    return True
+
+
+def _release_pid_lock(node_id: str) -> None:
+    try:
+        pid_file = Path.home() / ".agy-fleet" / f"daemon_{node_id}.pid"
+        if pid_file.exists():
+            content = pid_file.read_text().strip()
+            if content == str(os.getpid()):
+                pid_file.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def main():
     cfg = DaemonConfig.load()
+    if not _acquire_pid_lock(cfg.node_id):
+        sys.exit(0)
+
     daemon = FleetDaemon(cfg)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def _run():
+        await daemon.start()
+        stop_event = asyncio.Event()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
+        def _signal_handler():
+            stop_event.set()
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _signal_handler)
+            except (NotImplementedError, RuntimeError):
+                pass
+
         try:
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
-        except (NotImplementedError, RuntimeError):
+            signal.signal(signal.SIGTERM, lambda s, f: stop_event.set())
+            signal.signal(signal.SIGINT, lambda s, f: stop_event.set())
+        except (ValueError, AttributeError):
             pass
 
+        await stop_event.wait()
+        await daemon.stop()
+
     try:
-        loop.run_until_complete(daemon.start())
-        loop.run_forever()
+        asyncio.run(_run())
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        loop.run_until_complete(daemon.stop())
-        loop.close()
+        _release_pid_lock(cfg.node_id)
 
 
 if __name__ == "__main__":
