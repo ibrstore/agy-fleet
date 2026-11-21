@@ -21,19 +21,19 @@ if (-not (Test-Path $PythonExe)) {
 # Gunakan pythonw.exe jika ada (menjalankan tanpa jendela konsol sama sekali)
 $TargetPython = if (Test-Path $PythonWExe) { $PythonWExe } else { $PythonExe }
 
-# 1. Buat Runner VBScript untuk eksekusi 100% tersembunyi (Hidden Window)
+# 1. Buat Runner VBScript sebagai fallback (eksekusi hidden window)
 $VbsPath = Join-Path $RepoDir "scripts\run_daemon_hidden.vbs"
 $VbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.CurrentDirectory = "$RepoDir"
-WshShell.Run """" & "$PythonExe" & """ -m daemon.agent", 0, False
+WshShell.Run """" & "$TargetPython" & """ -m daemon.agent", 0, False
 Set WshShell = Nothing
 "@
 [System.IO.File]::WriteAllText($VbsPath, $VbsContent)
 
-# 2. Daftarkan ke Task Scheduler agar otomatis jalan saat login / startup
+# 2. Daftarkan langsung ke Task Scheduler dengan pythonw.exe (Tersembunyi & Dipantau Langsung)
 try {
-    $Action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$VbsPath`"" -WorkingDirectory $RepoDir
+    $Action = New-ScheduledTaskAction -Execute $TargetPython -Argument "-m daemon.agent" -WorkingDirectory $RepoDir
     $Trigger = New-ScheduledTaskTrigger -AtLogOn
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
     
@@ -53,8 +53,8 @@ try {
     $ShortcutPath = Join-Path $StartupFolder "AntigravityFleetDaemon.lnk"
     $WshShell = New-Object -ComObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = "wscript.exe"
-    $Shortcut.Arguments = "`"$VbsPath`""
+    $Shortcut.TargetPath = $TargetPython
+    $Shortcut.Arguments = "-m daemon.agent"
     $Shortcut.WorkingDirectory = $RepoDir
     $Shortcut.WindowStyle = 7
     $Shortcut.Description = "Auto-start Antigravity Fleet Daemon"
@@ -76,9 +76,15 @@ try {
     Write-Warning "Gagal mengonfigurasi powercfg: $_"
 }
 
-# 4. Jalankan sekarang di background secara terlepas (Detached / Hidden)
+# 5. Jalankan daemon sekarang di background secara terlepas (Detached / Hidden)
 Write-Host "==> Menjalankan daemon di background (tersembunyi)..."
-Start-Process -FilePath "wscript.exe" -ArgumentList "`"$VbsPath`""
+try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    Write-Host "✅ Daemon telah aktif berjalan via Task Scheduler!"
+} catch {
+    Start-Process -FilePath $TargetPython -ArgumentList "-m daemon.agent" -WorkingDirectory $RepoDir -WindowStyle Hidden
+    Write-Host "✅ Daemon telah aktif berjalan di background!"
+}
 
 Write-Host "✅ Daemon telah aktif berjalan di background!"
 Write-Host "Terminal ini aman untuk ditutup sekarang tanpa menghentikan daemon."

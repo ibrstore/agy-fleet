@@ -278,8 +278,22 @@ class FleetDaemon:
                 )
                 stdout, stderr = await proc.communicate()
                 logger.info(f"Git pull output: {stdout.decode()}")
-                # Exit cleanly so systemd / service supervisor restarts us with updated code
-                sys.exit(0)
+
+                # Cleanly release resources before respawning
+                _release_pid_lock(self.config.node_id)
+                if self.nc and not self.nc.is_closed:
+                    try:
+                        await self.nc.close()
+                    except Exception:
+                        pass
+
+                # Respawn self with updated code
+                if sys.platform == "win32":
+                    import subprocess
+                    subprocess.Popen([sys.executable] + sys.argv, creationflags=0x08000000)
+                    sys.exit(0)
+                else:
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
 
         except Exception as e:
             logger.error(f"Error handling broadcast: {e}")
