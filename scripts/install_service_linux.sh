@@ -66,6 +66,7 @@ else
 fi
 
 echo "==> Mengaktifkan service via systemctl --user..."
+loginctl enable-linger "$USER_NAME" 2>/dev/null || true
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME"
 systemctl --user restart "$SERVICE_NAME"
