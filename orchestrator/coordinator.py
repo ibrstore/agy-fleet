@@ -388,7 +388,9 @@ class FleetCoordinator:
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
                     "command": diag_cmd,
                     "conversation_id": active_conv_id,
-                    "timeout_sec": 240
+                    "timeout_sec": 240,
+                    "model": "gemini-3.8-flash-low",
+                    "effort": "low"
                 }
                 try:
                     resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=250.0)

@@ -77,6 +77,7 @@ class AgyAdapter:
         output_format: str = "json",
         skip_permissions: bool = True,
         effort: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a non-interactive prompt through agy.
@@ -100,6 +101,11 @@ class AgyAdapter:
 
         # Build CLI command arguments
         cmd = [self.binary_path, "-p", prompt, "--output-format", output_format]
+
+        # Use fast conversational model by default to prevent 2-minute thinking stall
+        effective_model = model or "gemini-3.8-flash-low"
+        cmd.extend(["--model", effective_model])
+        cmd.append("--disable-slash-commands")
 
         # Use print-timeout 0s so agy's thinking is not cut off prematurely;
         # Python's asyncio.wait_for handles overall safety timeout.
