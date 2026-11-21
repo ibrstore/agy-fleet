@@ -107,6 +107,7 @@ class FleetCoordinator:
         self.dp.message.register(self._cmd_mode, Command("mode"))
         self.dp.message.register(self._cmd_update, Command("update"))
         self.dp.message.register(self._cmd_dashboard, Command("dashboard"))
+        self.dp.message.register(self._cmd_getfile, Command("file", "getfile"))
 
         # Callback query handlers for Inline Manifest Approval
         self.dp.callback_query.register(self._handle_manifest_approval, F.data.startswith("man:app:"))
@@ -191,6 +192,64 @@ class FleetCoordinator:
             await self.bot.pin_chat_message(chat_id=message.chat.id, message_id=sent.message_id)
         except Exception:
             pass
+
+    async def _cmd_getfile(self, message: Message):
+        """Fetch and send a file as document to Telegram with DLP redaction."""
+        args = message.text.split(maxsplit=1)[1:] if message.text else []
+        if not args:
+            await self.dlp.send_safe_message(
+                self.bot, message.chat.id,
+                "ℹ️ Gunakan format: `/file <path_file>` (contoh: `/file /root/report.txt`)",
+                topic_id=message.message_thread_id
+            )
+            return
+
+        file_path_str = args[0].strip()
+        from pathlib import Path
+        from aiogram.types import BufferedInputFile
+        file_path = Path(file_path_str)
+
+        if not file_path.exists() or not file_path.is_file():
+            await self.dlp.send_safe_message(
+                self.bot, message.chat.id,
+                f"❌ File tidak ditemukan: `{file_path_str}`",
+                topic_id=message.message_thread_id
+            )
+            return
+
+        try:
+            # Check size (< 45 MB limit for bot API)
+            size_mb = file_path.stat().st_size / (1024 * 1024)
+            if size_mb > 45:
+                await self.dlp.send_safe_message(
+                    self.bot, message.chat.id,
+                    f"⚠️ Ukuran file ({size_mb:.1f} MB) melebihi batas Telegram (45 MB).",
+                    topic_id=message.message_thread_id
+                )
+                return
+
+            # If text file, run DLP redaction
+            is_text = file_path.suffix.lower() in [".txt", ".log", ".json", ".py", ".md", ".sh", ".yaml", ".yml", ".env", ".conf"]
+            if is_text:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                sanitized = self.dlp.redactor.redact(content)
+                file_bytes = sanitized.encode("utf-8")
+            else:
+                file_bytes = file_path.read_bytes()
+
+            doc = BufferedInputFile(file_bytes, filename=file_path.name)
+            await self.bot.send_document(
+                chat_id=message.chat.id,
+                document=doc,
+                caption=f"📄 File: `{file_path.name}` ({file_path_str})",
+                message_thread_id=message.message_thread_id
+            )
+        except Exception as e:
+            await self.dlp.send_safe_message(
+                self.bot, message.chat.id,
+                f"❌ Gagal mengirim file: `{str(e)}`",
+                topic_id=message.message_thread_id
+            )
 
     # ---------------- Tagging & Chat Handling ----------------
 
