@@ -258,37 +258,63 @@ class FleetCoordinator:
 
     def _parse_target_nodes(self, text: str) -> Tuple[List[str], str]:
         """
-        Extracts target nodes from message prefix.
-        Supports new canonical names (pc-naufal, pc-diba, lap-asus, lap-user, pc-nci, vps)
-        as well as legacy aliases (pc1, pc2, laptop1, laptop2).
-        e.g. "pc-naufal: cek disk" -> (["pc-naufal"], "cek disk")
-        "pc-naufal vps: cek port" -> (["pc-naufal", "vps"], "cek port")
-        "@online: cek ram" -> (["@online"], "cek ram")
+        Extracts target node IDs from user text:
+        "@pc-naufal: cek ram" -> (["pc-naufal"], "cek ram")
+        "@naufal halo apa kabar?" -> (["pc-naufal"], "halo apa kabar?")
+        "@pc-naufal, @pc-diba: halo" -> (["pc-naufal", "pc-diba"], "halo")
+        "@online: cek ram" -> (online_nodes, "cek ram")
+        "@all: status" -> (all_nodes, "status")
+        "vps: cek disk" -> (["vps"], "cek disk")
+        "halo apa kabar?" -> (["vps"], "halo apa kabar?")
         """
         clean_text = text.strip()
-        pattern = r"^(@all|@online|(?:[a-zA-Z0-9_\-]+[,\s]*)+):?\s*(.*)$"
-        match = re.match(pattern, clean_text, re.IGNORECASE)
-        if match:
-            nodes_part = match.group(1).lower().strip()
-            rest = match.group(2).strip()
-            if nodes_part == "@all":
-                return self.presence.get_all_nodes(), rest
-            elif nodes_part == "@online":
-                return self.presence.get_online_nodes() or ["vps"], rest
+        if not clean_text:
+            return ["vps"], ""
+
+        # Check for @all or @semua
+        m_all = re.match(r"^@(all|semua)\b[:\s]*(.*)$", clean_text, re.IGNORECASE)
+        if m_all:
+            return list(FLEET_NODES), m_all.group(2).strip()
+
+        # Check for @online
+        m_online = re.match(r"^@online\b[:\s]*(.*)$", clean_text, re.IGNORECASE)
+        if m_online:
+            online = self.presence.get_online_nodes()
+            return (online if online else ["vps"]), m_online.group(1).strip()
+
+        # Check for leading node tags (e.g. @pc-naufal, @naufal, pc-naufal:, @pc-diba)
+        words = clean_text.split()
+        found_nodes = []
+        idx = 0
+        while idx < len(words):
+            w = words[idx].strip(",;:").lower()
+            candidate = w[1:] if w.startswith("@") else w
+            canonical = NODE_ALIASES.get(candidate, candidate)
+            if canonical in FLEET_NODES:
+                if canonical not in found_nodes:
+                    found_nodes.append(canonical)
+                idx += 1
             else:
-                raw_nodes = re.split(r"[,\s]+", nodes_part)
-                valid_nodes = []
-                for n in raw_nodes:
-                    # Resolve aliases if any
-                    canonical = NODE_ALIASES.get(n, n)
-                    if canonical in FLEET_NODES and canonical not in valid_nodes:
-                        valid_nodes.append(canonical)
+                break
 
-                if valid_nodes:
-                    return valid_nodes, rest
+        if found_nodes:
+            rest = " ".join(words[idx:]).strip()
+            if rest.startswith(":"):
+                rest = rest[1:].strip()
+            return found_nodes, rest
 
-        # Default: target vps (or coordinator node)
-        return ["vps"], clean_text
+        # Check colon format (e.g. "pc-naufal: halo")
+        m_colon = re.match(r"^([a-zA-Z0-9_\-]+)\s*:\s*(.*)$", clean_text)
+        if m_colon:
+            candidate = m_colon.group(1).lower()
+            canonical = NODE_ALIASES.get(candidate, candidate)
+            if canonical in FLEET_NODES:
+                return [canonical], m_colon.group(2).strip()
+
+        # Default fallback: target first available online node (or vps)
+        online = self.presence.get_online_nodes()
+        default_target = ["vps"] if "vps" in online else (online[:1] or ["vps"])
+        return default_target, clean_text
 
     async def _handle_chat_message(self, message: Message):
         """Main chat handler: default = CONSULT (Read-Only Fact Gathering)."""
@@ -364,12 +390,17 @@ class FleetCoordinator:
                 # Read-only CONSULT answer
                 summary_lines = ["🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*\n"]
                 for nid, res in facts_collected.items():
+                    agy_info = res.get("agy", {})
                     if "stdout" in res and res["stdout"]:
                         summary_lines.append(f"🖥️ *Node `{nid}`:*\n```\n{res['stdout'][:800]}\n```")
-                    elif "agy" in res and res["agy"].get("response"):
-                        summary_lines.append(f"🤖 *Node `{nid}`:*\n{res['agy']['response']}")
+                    elif agy_info.get("response"):
+                        summary_lines.append(f"🤖 *Node `{nid}`:*\n{agy_info['response'].strip()}")
+                    elif agy_info.get("error"):
+                        summary_lines.append(f"⚠️ *Node `{nid}` error:* `{agy_info['error']}`")
                     elif "error" in res:
                         summary_lines.append(f"⚠️ *Node `{nid}`:* {res['error']}")
+                    else:
+                        summary_lines.append(f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks).")
 
                 full_text = "\n\n".join(summary_lines)
                 display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
