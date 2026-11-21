@@ -389,8 +389,8 @@ class FleetCoordinator:
                     "command": diag_cmd,
                     "conversation_id": active_conv_id,
                     "timeout_sec": 240,
-                    "model": "gemini-3.8-flash-low",
-                    "effort": "low"
+                    "model": "gemini-3.8-flash-high",
+                    "effort": "high"
                 }
                 try:
                     resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=250.0)
@@ -495,24 +495,7 @@ class FleetCoordinator:
             await self._safe_edit_message(prog_msg, f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
 
     def _guess_diagnostic_cmd(self, prompt: str, node_id: str = "vps") -> Optional[str]:
-        """Maps common natural query keywords to safe read-only commands for Linux nodes."""
-        if node_id != "vps":
-            # For Windows nodes, let local agy AI handle natural language queries
-            return None
-
-        p = prompt.lower()
-        if "disk" in p or "storage" in p:
-            return "df -h"
-        if "ram" in p or "memori" in p or "memory" in p:
-            return "free -h"
-        if "cpu" in p or "load" in p or "beban" in p:
-            return "uptime"
-        if "port" in p or "koneksi" in p or "listening" in p:
-            return "ss -tuln"
-        if "docker" in p or "container" in p:
-            return "docker ps"
-        if "ip" in p or "network" in p:
-            return "ip addr"
+        """Disabled: all conversational queries pass directly to Antigravity AI for intelligent responses."""
         return None
 
     def _detect_modification_intent(self, prompt: str, facts: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:

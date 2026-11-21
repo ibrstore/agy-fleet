@@ -102,8 +102,8 @@ class AgyAdapter:
         # Build CLI command arguments
         cmd = [self.binary_path, "-p", prompt, "--output-format", output_format]
 
-        # Use fast conversational model by default to prevent 2-minute thinking stall
-        effective_model = model or "gemini-3.8-flash-low"
+        # Default to requested flash-high model
+        effective_model = model or "gemini-3.8-flash-high"
         cmd.extend(["--model", effective_model])
         cmd.append("--disable-slash-commands")
 
