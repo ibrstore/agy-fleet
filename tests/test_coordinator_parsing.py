@@ -67,3 +67,25 @@ def test_strip_markdown():
     assert "**" not in clean
     assert "print('hello')" in clean
     assert "Ringkasan Arsitektur" in clean
+
+
+def test_build_multi_node_preview(coordinator):
+    from orchestrator.dlp_filter import TelegramDLPFilter
+    coordinator.dlp = TelegramDLPFilter()
+    coordinator.conv_mgr = MagicMock()
+    coordinator.conv_mgr.max_turns = 30
+
+    header = "🔗 *HASIL DISKUSI BERANTAI*"
+    nodes = ["pc-diba", "vps"]
+    results = {
+        "pc-diba": {"agy": {"response": "A" * 3000}},
+        "vps": {"agy": {"response": "B" * 3000}},
+    }
+
+    preview, exceeds, full = coordinator._build_multi_node_preview(header, nodes, results, max_len=3500)
+    assert exceeds is True
+    assert "Node `pc-diba`" in preview
+    assert "Node `vps`" in preview
+    assert len(preview) <= 3500
+    assert "A" * 3000 in full
+    assert "B" * 3000 in full

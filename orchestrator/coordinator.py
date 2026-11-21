@@ -15,7 +15,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
 import nats
 from nats.aio.client import Client as NATSClient
 
@@ -285,6 +285,9 @@ class FleetCoordinator:
         t = re.sub(r"_([^_]+)_", r"\1", t)
         t = re.sub(r"`([^`]+)`", r"\1", t)
         t = re.sub(r"```[a-zA-Z]*\n?([\s\S]*?)```", r"\1", t)
+        t = t.replace("**", "").replace("```", "").replace("`", "")
+        # Remove orphaned asterisks or underscores that could look like noise
+        t = re.sub(r"(?<!\w)[*_]+(?!\w)", "", t)
         return t
 
     async def _safe_edit_message(self, message: Message, text: str, reply_markup=None) -> None:
@@ -464,7 +467,16 @@ class FleetCoordinator:
                     lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* - Langkah [{step_num}/{len(target_nodes)}]\n"]
                     for prev_nid in target_nodes:
                         if prev_nid in completed_results:
-                            lines.append(self._format_node_result(prev_nid, completed_results[prev_nid]))
+                            res_text = self._format_node_result(prev_nid, completed_results[prev_nid])
+                            if len(res_text) > 1200:
+                                cut = res_text[:1200].rfind("\n")
+                                if cut < 600:
+                                    cut = 1200
+                                snip = res_text[:cut].rstrip()
+                                if snip.count("```") % 2 != 0:
+                                    snip += "\n```"
+                                res_text = snip + "\n\n_...(jawaban lengkap diteruskan ke langkah berikutnya)_"
+                            lines.append(res_text)
                     lines.append(f"\n⏳ _Sedang memproses langkah {step_num} pada {targets_str}..._")
 
                     full_text = "\n\n".join(lines)
@@ -489,12 +501,12 @@ class FleetCoordinator:
                 facts_collected = completed_results
 
                 # Render final chain result
-                lines = [f"🔗 *HASIL DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* ({len(target_nodes)} Langkah Selesai)\n"]
-                for nid in target_nodes:
-                    if nid in completed_results:
-                        lines.append(self._format_node_result(nid, completed_results[nid]))
-                full_text = "\n\n".join(lines)
-                display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
+                header = f"🔗 *HASIL DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* ({len(target_nodes)} Langkah Selesai)"
+                display_text, exceeds, full_redacted = self._build_multi_node_preview(
+                    header=header,
+                    target_nodes=target_nodes,
+                    results=completed_results
+                )
                 await self._safe_edit_message(prog_msg, display_text)
                 if exceeds:
                     try:
@@ -509,6 +521,16 @@ class FleetCoordinator:
                         )
                     except Exception as doc_err:
                         logger.error(f"Failed to send chain markdown document: {doc_err}")
+                        try:
+                            doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
+                            await self.bot.send_document(
+                                chat_id=message.chat.id,
+                                document=doc,
+                                caption="📄 Dokumen Lengkap Diskusi Berantai (.md)",
+                                message_thread_id=message.message_thread_id
+                            )
+                        except Exception as doc_err2:
+                            logger.error(f"Retry sending chain doc failed: {doc_err2}")
 
             else:
                 # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
@@ -517,15 +539,24 @@ class FleetCoordinator:
 
                 async def _render_progressive_status(is_final: bool = False):
                     async with edit_lock:
-                        lines = ["🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*\n"]
-                        for nid in target_nodes:
-                            if nid in completed_results:
-                                lines.append(self._format_node_result(nid, completed_results[nid]))
-                        if pending_nodes:
-                            waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
-                            lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
-                        full_text = "\n\n".join(lines)
-                        display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
+                        header = "🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*"
+                        if is_final:
+                            display_text, exceeds, full_redacted = self._build_multi_node_preview(
+                                header=header,
+                                target_nodes=target_nodes,
+                                results=completed_results
+                            )
+                        else:
+                            lines = [header + "\n"]
+                            for nid in target_nodes:
+                                if nid in completed_results:
+                                    lines.append(self._format_node_result(nid, completed_results[nid]))
+                            if pending_nodes:
+                                waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
+                                lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
+                            full_text = "\n\n".join(lines)
+                            display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
+
                         await self._safe_edit_message(prog_msg, display_text)
                         if is_final and exceeds:
                             try:
@@ -540,6 +571,16 @@ class FleetCoordinator:
                                 )
                             except Exception as doc_err:
                                 logger.error(f"Failed to send markdown document: {doc_err}")
+                                try:
+                                    doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
+                                    await self.bot.send_document(
+                                        chat_id=message.chat.id,
+                                        document=doc,
+                                        caption="📄 Dokumen Lengkap Hasil Konsultasi (.md)",
+                                        message_thread_id=message.message_thread_id
+                                    )
+                                except Exception as doc_err2:
+                                    logger.error(f"Retry sending consult doc failed: {doc_err2}")
 
                 async def run_single_node(nid: str):
                     res = await query_node(nid)
@@ -620,6 +661,52 @@ class FleetCoordinator:
             return f"⚠️ *Node `{nid}`:* {res['error']}"
         else:
             return f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks)."
+
+    def _build_multi_node_preview(
+        self,
+        header: str,
+        target_nodes: List[str],
+        results: Dict[str, Dict[str, Any]],
+        max_len: int = 3500
+    ) -> Tuple[str, bool, str]:
+        """
+        Builds a balanced Telegram preview ensuring every node has visibility in chat,
+        while generating the complete, unclipped markdown for file attachment.
+        """
+        # Full text without any clipping
+        full_lines = [header + "\n"]
+        for nid in target_nodes:
+            if nid in results:
+                full_lines.append(self._format_node_result(nid, results[nid]))
+        full_unclipped = "\n\n".join(full_lines)
+        full_redacted = self.dlp.redactor.redact(full_unclipped)
+
+        if len(full_redacted) <= max_len:
+            return full_redacted, False, full_redacted
+
+        # Balanced preview per node
+        num_nodes = len([n for n in target_nodes if n in results]) or 1
+        per_node_limit = max(400, (max_len - 500) // num_nodes)
+
+        preview_lines = [header + "\n"]
+        for nid in target_nodes:
+            if nid in results:
+                formatted = self._format_node_result(nid, results[nid])
+                if len(formatted) > per_node_limit:
+                    cut = formatted[:per_node_limit].rfind("\n")
+                    if cut < per_node_limit // 2:
+                        cut = per_node_limit
+                    snippet = formatted[:cut].rstrip()
+                    if snippet.count("```") % 2 != 0:
+                        snippet += "\n```"
+                    snippet += "\n\n_...(lanjutan lengkap node ini ada di file .md terlampir)_"
+                    preview_lines.append(snippet)
+                else:
+                    preview_lines.append(formatted)
+
+        preview_lines.append(f"\n📄 _Output dipotong karena batas Telegram ({max_len} karakter). Dokumen lengkap dilampirkan di bawah (.md)_")
+        preview_text = self.dlp.redactor.redact("\n\n".join(preview_lines))
+        return preview_text, True, full_redacted
 
     def _is_chain_request(self, prompt: str, target_nodes: List[str], raw_text: str = "") -> bool:
         """Determines if query requests a sequential chain between multiple nodes."""

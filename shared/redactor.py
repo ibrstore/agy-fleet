@@ -85,6 +85,6 @@ class Redactor:
 
         truncated_display = (
             f"{truncated_preview}\n\n"
-            f"📄 *[Output dipotong karena melebihi batas {max_len} karakter. Dokumen lengkap dilampirkan sebagai file .md]*"
+            f"📄 _[Output dipotong karena melebihi batas {max_len} karakter. Dokumen lengkap dilampirkan sebagai file .md]_"
         )
         return truncated_display, True, full_redacted
