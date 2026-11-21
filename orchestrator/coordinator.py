@@ -388,10 +388,10 @@ class FleetCoordinator:
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
                     "command": diag_cmd,
                     "conversation_id": active_conv_id,
-                    "timeout_sec": 90
+                    "timeout_sec": 240
                 }
                 try:
-                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=95.0)
+                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=250.0)
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
 
                     # Record conversation turn and check if rotation needed
@@ -409,7 +409,29 @@ class FleetCoordinator:
                 except Exception as e:
                     return node_id, {"status": "ERROR", "error": str(e)}
 
-            node_results = await asyncio.gather(*[query_node(nid) for nid in target_nodes])
+            async def _keepalive_feedback():
+                elapsed = 0
+                targets_str = ", ".join([f"`{n}`" for n in target_nodes])
+                while True:
+                    try:
+                        await asyncio.sleep(5.0)
+                        elapsed += 5
+                        await self.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                        if elapsed % 15 == 0:
+                            await self._safe_edit_message(
+                                prog_msg,
+                                f"⏳ _Memproses via Antigravity AI ({targets_str})...\nSedang berpikir & merespon... ({elapsed}s)_"
+                            )
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        pass
+
+            keepalive_task = asyncio.create_task(_keepalive_feedback())
+            try:
+                node_results = await asyncio.gather(*[query_node(nid) for nid in target_nodes])
+            finally:
+                keepalive_task.cancel()
             facts_collected = dict(node_results)
 
             # 2. Check if the prompt / gathered facts indicate need for system modification
