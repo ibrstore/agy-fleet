@@ -1,0 +1,161 @@
+"""
+Antigravity CLI (agy) Adapter.
+Provides an isolated, non-interactive/headless interface to invoke local `agy`.
+Decoupled so CLI changes can be accommodated without affecting the rest of the daemon.
+"""
+import asyncio
+import json
+import shutil
+from typing import Dict, Any, Optional
+from shared.redactor import Redactor
+
+
+class AgyAdapter:
+    def __init__(self, binary_path: str = "agy", redactor: Optional[Redactor] = None):
+        self.binary_path = binary_path
+        self.redactor = redactor or Redactor()
+
+    def is_available(self) -> bool:
+        """Check if agy binary is available in PATH or specified location."""
+        return shutil.which(self.binary_path) is not None
+
+    async def get_version(self) -> str:
+        """Detect agy installation presence/version."""
+        if not self.is_available():
+            return "not_installed"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self.binary_path, "--help",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            if b"Usage of agy:" in stdout:
+                return "antigravity-cli (ready)"
+            return "detected"
+        except Exception as e:
+            return f"error: {str(e)}"
+
+    async def run_prompt(
+        self,
+        prompt: str,
+        conversation_id: Optional[str] = None,
+        timeout_sec: int = 60,
+        output_format: str = "json",
+        skip_permissions: bool = True,
+        effort: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a non-interactive prompt through agy.
+        Returns structured dictionary:
+        {
+            "status": "SUCCESS" | "ERROR",
+            "conversation_id": "...",
+            "response": "...",
+            "error": "...",
+            "raw_output": "..."
+        }
+        """
+        if not self.is_available():
+            return {
+                "status": "ERROR",
+                "conversation_id": conversation_id or "",
+                "response": "",
+                "error": f"Antigravity CLI binary '{self.binary_path}' not found on this node.",
+                "raw_output": ""
+            }
+
+        # Build CLI command arguments
+        cmd = [self.binary_path, "-p", prompt, "--output-format", output_format]
+
+        if timeout_sec > 0:
+            cmd.extend(["--print-timeout", f"{timeout_sec}s"])
+
+        if skip_permissions:
+            cmd.append("--dangerously-skip-permissions")
+
+        if conversation_id:
+            cmd.extend(["--conversation", conversation_id])
+
+        if effort and effort in ["low", "medium", "high", "xhigh", "max"]:
+            cmd.extend(["--effort", effort])
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            try:
+                # Add 5s buffer over print-timeout
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout_sec + 5.0
+                )
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
+                return {
+                    "status": "ERROR",
+                    "conversation_id": conversation_id or "",
+                    "response": "",
+                    "error": f"agy execution timed out after {timeout_sec}s",
+                    "raw_output": ""
+                }
+
+            stdout_str = stdout_bytes.decode("utf-8", errors="replace")
+            stderr_str = stderr_bytes.decode("utf-8", errors="replace")
+
+            # Redact outputs before parsing or returning
+            stdout_clean = self.redactor.redact(stdout_str)
+            stderr_clean = self.redactor.redact(stderr_str)
+
+            if output_format == "json":
+                # Look for JSON payload in stdout lines
+                parsed = self._extract_json_response(stdout_clean)
+                if parsed:
+                    return parsed
+
+            # Fallback if text output or parsing failed
+            status = "SUCCESS" if proc.returncode == 0 else "ERROR"
+            return {
+                "status": status,
+                "conversation_id": conversation_id or "",
+                "response": stdout_clean.strip(),
+                "error": stderr_clean.strip() if proc.returncode != 0 else "",
+                "raw_output": stdout_clean
+            }
+
+        except Exception as e:
+            return {
+                "status": "ERROR",
+                "conversation_id": conversation_id or "",
+                "response": "",
+                "error": f"Subprocess exception: {str(e)}",
+                "raw_output": ""
+            }
+
+    def _extract_json_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """Find and parse JSON object from agy CLI output."""
+        # agy may print lines before or after the JSON payload
+        lines = text.strip().splitlines()
+        for line in reversed(lines):
+            line_str = line.strip()
+            if line_str.startswith("{") and line_str.endswith("}"):
+                try:
+                    data = json.loads(line_str)
+                    if "status" in data and ("response" in data or "error" in data):
+                        return {
+                            "status": data.get("status", "SUCCESS"),
+                            "conversation_id": data.get("conversation_id", ""),
+                            "response": data.get("response", ""),
+                            "error": data.get("error", ""),
+                            "raw_output": text
+                        }
+                except json.JSONDecodeError:
+                    continue
+        return None
