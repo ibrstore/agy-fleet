@@ -458,15 +458,24 @@ class FleetCoordinator:
                     if nid in completed_results:
                         lines.append(self._format_node_result(nid, completed_results[nid]))
                 full_text = "\n\n".join(lines)
-                display_text, _, _ = self.dlp.sanitize_text(full_text)
+                display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
                 await self._safe_edit_message(prog_msg, display_text)
+                if exceeds:
+                    doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
+                    await self.bot.send_document(
+                        chat_id=message.chat.id,
+                        document=doc,
+                        caption="📄 *Dokumen Lengkap Diskusi Berantai (.md)*",
+                        message_thread_id=message.message_thread_id,
+                        reply_to_message_id=prog_msg.message_id
+                    )
 
             else:
                 # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
                 completed_results: Dict[str, Dict[str, Any]] = {}
                 pending_nodes = list(target_nodes)
 
-                async def _render_progressive_status():
+                async def _render_progressive_status(is_final: bool = False):
                     async with edit_lock:
                         lines = ["🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*\n"]
                         for nid in target_nodes:
@@ -476,15 +485,24 @@ class FleetCoordinator:
                             waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
                             lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
                         full_text = "\n\n".join(lines)
-                        display_text, _, _ = self.dlp.sanitize_text(full_text)
+                        display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
                         await self._safe_edit_message(prog_msg, display_text)
+                        if is_final and exceeds:
+                            doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
+                            await self.bot.send_document(
+                                chat_id=message.chat.id,
+                                document=doc,
+                                caption="📄 *Dokumen Lengkap Hasil Konsultasi (.md)*",
+                                message_thread_id=message.message_thread_id,
+                                reply_to_message_id=prog_msg.message_id
+                            )
 
                 async def run_single_node(nid: str):
                     res = await query_node(nid)
                     completed_results[nid] = res[1]
                     if nid in pending_nodes:
                         pending_nodes.remove(nid)
-                    await _render_progressive_status()
+                    await _render_progressive_status(is_final=False)
                     return res
 
                 async def _keepalive_typing():
@@ -506,7 +524,7 @@ class FleetCoordinator:
                 facts_collected = dict(node_results)
 
                 # Final render without pending footer
-                await _render_progressive_status()
+                await _render_progressive_status(is_final=True)
 
             # 2. Check if the prompt / gathered facts indicate need for system modification
             needs_action, proposal = self._detect_modification_intent(cleaned_prompt, facts_collected)
