@@ -69,8 +69,9 @@ class AgyAdapter:
         # Build CLI command arguments
         cmd = [self.binary_path, "-p", prompt, "--output-format", output_format]
 
-        if timeout_sec > 0:
-            cmd.extend(["--print-timeout", f"{timeout_sec}s"])
+        # Use print-timeout 0s so agy's thinking is not cut off prematurely;
+        # Python's asyncio.wait_for handles overall safety timeout.
+        cmd.extend(["--print-timeout", "0s"])
 
         if skip_permissions:
             cmd.append("--dangerously-skip-permissions")

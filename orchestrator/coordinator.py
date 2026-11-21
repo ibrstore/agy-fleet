@@ -387,10 +387,10 @@ class FleetCoordinator:
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
                     "command": diag_cmd,
                     "conversation_id": active_conv_id,
-                    "timeout_sec": 60
+                    "timeout_sec": 90
                 }
                 try:
-                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=65.0)
+                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=95.0)
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
 
                     # Record conversation turn and check if rotation needed
