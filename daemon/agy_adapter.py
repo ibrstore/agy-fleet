@@ -15,10 +15,42 @@ class AgyAdapter:
     def __init__(self, binary_path: str = "agy", redactor: Optional[Redactor] = None):
         self.binary_path = binary_path
         self.redactor = redactor or Redactor()
+        self._resolve_binary_path()
+
+    def _resolve_binary_path(self) -> None:
+        """Resolve agy binary path if not in current standard PATH."""
+        if shutil.which(self.binary_path):
+            return
+
+        candidates = []
+        if sys.platform == "win32":
+            user_profile = os.environ.get("USERPROFILE", "")
+            local_appdata = os.environ.get("LOCALAPPDATA", "")
+            candidates = [
+                os.path.join(local_appdata, "Programs", "agy", "agy.exe"),
+                os.path.join(local_appdata, "agy", "bin", "agy.exe"),
+                os.path.join(user_profile, ".local", "bin", "agy.exe"),
+                os.path.join(user_profile, "AppData", "Roaming", "npm", "agy.cmd"),
+                r"C:\Program Files\agy\agy.exe",
+            ]
+        else:
+            home = os.path.expanduser("~")
+            candidates = [
+                "/usr/local/bin/agy",
+                os.path.join(home, ".local", "bin", "agy"),
+                os.path.join(home, "bin", "agy"),
+                "/opt/agy/bin/agy",
+            ]
+
+        for cand in candidates:
+            if os.path.isfile(cand) and (sys.platform == "win32" or os.access(cand, os.X_OK)):
+                self.binary_path = cand
+                break
 
     def is_available(self) -> bool:
         """Check if agy binary is available in PATH or specified location."""
-        return shutil.which(self.binary_path) is not None
+        self._resolve_binary_path()
+        return (shutil.which(self.binary_path) is not None) or (os.path.isfile(self.binary_path) and (sys.platform == "win32" or os.access(self.binary_path, os.X_OK)))
 
     async def get_version(self) -> str:
         """Detect agy installation presence/version."""
