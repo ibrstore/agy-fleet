@@ -367,26 +367,27 @@ class FleetCoordinator:
         project_id = str(message.message_thread_id or message.chat.id)
 
         # Single progress message auto-edited during execution
-        prog_msg = await message.reply("⏳ _Memproses permintaan dalam mode CONSULT (Read-Only Fact Gathering)..._")
+        prog_msg = await message.reply("⏳ _Memproses permintaan via Antigravity Fleet..._")
 
         try:
-            # 1. Gather live node facts in parallel
+            # 1. Gather live node facts in parallel or chain
             online_nodes = self.presence.get_online_nodes()
             offline_nodes = [n for n in FLEET_NODES if n not in online_nodes]
             presence_context = f"ONLINE: {', '.join(online_nodes)} | OFFLINE: {', '.join(offline_nodes)}"
 
-            diag_cmd = self._guess_diagnostic_cmd(cleaned_prompt)
+            edit_lock = asyncio.Lock()
 
-            async def query_node(node_id: str) -> Tuple[str, Dict[str, Any]]:
+            async def query_node(node_id: str, prompt_override: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
                 if not self.presence.is_node_online(node_id):
                     return node_id, {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
 
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
                 active_conv_id = self.conv_mgr.get_conversation_id(node_id)
-                diag_cmd = self._guess_diagnostic_cmd(cleaned_prompt, node_id=node_id)
+                effective_prompt = prompt_override or f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
+
                 req_data = {
-                    "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
-                    "command": diag_cmd,
+                    "prompt": effective_prompt,
+                    "command": None,
                     "conversation_id": active_conv_id,
                     "timeout_sec": 240,
                     "model": "gemini-3.8-flash-high",
@@ -411,30 +412,101 @@ class FleetCoordinator:
                 except Exception as e:
                     return node_id, {"status": "ERROR", "error": str(e)}
 
-            async def _keepalive_feedback():
-                elapsed = 0
-                targets_str = ", ".join([f"`{n}`" for n in target_nodes])
-                while True:
-                    try:
-                        await asyncio.sleep(5.0)
-                        elapsed += 5
-                        await self.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-                        if elapsed % 15 == 0:
-                            await self._safe_edit_message(
-                                prog_msg,
-                                f"⏳ _Memproses via Antigravity AI ({targets_str})...\nSedang berpikir & merespon... ({elapsed}s)_"
-                            )
-                    except asyncio.CancelledError:
-                        break
-                    except Exception:
-                        pass
+            is_chain = self._is_chain_request(cleaned_prompt, target_nodes)
 
-            keepalive_task = asyncio.create_task(_keepalive_feedback())
-            try:
-                node_results = await asyncio.gather(*[query_node(nid) for nid in target_nodes])
-            finally:
-                keepalive_task.cancel()
-            facts_collected = dict(node_results)
+            if is_chain:
+                # ----------------- REKOMENDASI 2: SEQUENTIAL CHAIN-OF-THOUGHT -----------------
+                completed_results: Dict[str, Dict[str, Any]] = {}
+                prev_response = ""
+                prev_node = ""
+
+                for idx, nid in enumerate(target_nodes):
+                    step_num = idx + 1
+                    targets_str = f"`{nid}`"
+
+                    # Show current step progress
+                    lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* - Langkah [{step_num}/{len(target_nodes)}]\n"]
+                    for prev_nid in target_nodes:
+                        if prev_nid in completed_results:
+                            lines.append(self._format_node_result(prev_nid, completed_results[prev_nid]))
+                    lines.append(f"\n⏳ _Sedang memproses langkah {step_num} pada {targets_str}..._")
+
+                    full_text = "\n\n".join(lines)
+                    display_text, _, _ = self.dlp.sanitize_text(full_text)
+                    await self._safe_edit_message(prog_msg, display_text)
+
+                    # Prepare prompt with previous node's answer as context
+                    node_prompt = f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
+                    if prev_response:
+                        node_prompt = (
+                            f"[PRESENCE CONTEXT: {presence_context}]\n"
+                            f"[KONTEKS RESPONS SEBELUMNYA DARI `{prev_node}`]:\n{prev_response}\n\n"
+                            f"[INSTRUKSI / PERTANYAAN LANJUTAN UNTUK KAMU `{nid}`]:\n{cleaned_prompt}"
+                        )
+
+                    _, res = await query_node(nid, prompt_override=node_prompt)
+                    completed_results[nid] = res
+                    prev_node = nid
+                    agy_resp = res.get("agy", {}).get("response", "") or res.get("stdout", "")
+                    prev_response = agy_resp[:3000]
+
+                facts_collected = completed_results
+
+                # Render final chain result
+                lines = [f"🔗 *HASIL DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* ({len(target_nodes)} Langkah Selesai)\n"]
+                for nid in target_nodes:
+                    if nid in completed_results:
+                        lines.append(self._format_node_result(nid, completed_results[nid]))
+                full_text = "\n\n".join(lines)
+                display_text, _, _ = self.dlp.sanitize_text(full_text)
+                await self._safe_edit_message(prog_msg, display_text)
+
+            else:
+                # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
+                completed_results: Dict[str, Dict[str, Any]] = {}
+                pending_nodes = list(target_nodes)
+
+                async def _render_progressive_status():
+                    async with edit_lock:
+                        lines = ["🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*\n"]
+                        for nid in target_nodes:
+                            if nid in completed_results:
+                                lines.append(self._format_node_result(nid, completed_results[nid]))
+                        if pending_nodes:
+                            waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
+                            lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
+                        full_text = "\n\n".join(lines)
+                        display_text, _, _ = self.dlp.sanitize_text(full_text)
+                        await self._safe_edit_message(prog_msg, display_text)
+
+                async def run_single_node(nid: str):
+                    res = await query_node(nid)
+                    completed_results[nid] = res[1]
+                    if nid in pending_nodes:
+                        pending_nodes.remove(nid)
+                    await _render_progressive_status()
+                    return res
+
+                async def _keepalive_typing():
+                    while pending_nodes:
+                        try:
+                            await asyncio.sleep(5.0)
+                            await self.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                        except asyncio.CancelledError:
+                            break
+                        except Exception:
+                            pass
+
+                typing_task = asyncio.create_task(_keepalive_typing())
+                try:
+                    node_results = await asyncio.gather(*[run_single_node(nid) for nid in target_nodes])
+                finally:
+                    typing_task.cancel()
+
+                facts_collected = dict(node_results)
+
+                # Final render without pending footer
+                await _render_progressive_status()
 
             # 2. Check if the prompt / gathered facts indicate need for system modification
             needs_action, proposal = self._detect_modification_intent(cleaned_prompt, facts_collected)
@@ -458,41 +530,44 @@ class FleetCoordinator:
                     f"{proposal_text}\n\n⚠️ *Perintah ini memerlukan persetujuan eksplisit Anda sebelum dijalankan.*",
                     reply_markup=kb
                 )
-            else:
-                # Read-only CONSULT answer
-                summary_lines = ["🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*\n"]
-                for nid, res in facts_collected.items():
-                    agy_info = res.get("agy", {})
-                    if "stdout" in res and res["stdout"]:
-                        summary_lines.append(f"🖥️ *Node `{nid}`:*\n```\n{res['stdout'][:800]}\n```")
-                    elif res.get("stderr"):
-                        summary_lines.append(f"⚠️ *Node `{nid}`:*\n```\n{res['stderr'][:800]}\n```")
-                    elif agy_info.get("response"):
-                        ans = agy_info['response'].strip()
-                        conv_info = res.get("_conv_info")
-                        footer = ""
-                        if conv_info:
-                            turn_c = conv_info.get("turn_count", 1)
-                            tok = conv_info.get("total_tokens", 0)
-                            footer = f"\n\n_💬 Sesi `{nid}`: Turn {turn_c}/{self.conv_mgr.max_turns} | ~{tok//1000}k tokens_"
-                        summary_lines.append(f"🤖 *Node `{nid}`:*\n{ans}{footer}")
-                    elif agy_info.get("error"):
-                        summary_lines.append(f"⚠️ *Node `{nid}` error:* `{agy_info['error']}`")
-                    elif "error" in res:
-                        summary_lines.append(f"⚠️ *Node `{nid}`:* {res['error']}")
-                    else:
-                        summary_lines.append(f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks).")
-
-                    if res.get("_rotated"):
-                        summary_lines.append(f"🔄 _Konteks percakapan di `{nid}` telah penuh/berat dan di-refresh otomatis untuk menjaga kecepatan respons._")
-
-                full_text = "\n\n".join(summary_lines)
-                display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
-                await self._safe_edit_message(prog_msg, display_text)
 
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
             await self._safe_edit_message(prog_msg, f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
+
+    def _format_node_result(self, nid: str, res: Dict[str, Any]) -> str:
+        """Format individual node result for Telegram rendering."""
+        agy_info = res.get("agy", {})
+        if "stdout" in res and res["stdout"]:
+            return f"🖥️ *Node `{nid}`:*\n```\n{res['stdout'][:800]}\n```"
+        elif res.get("stderr"):
+            return f"⚠️ *Node `{nid}`:*\n```\n{res['stderr'][:800]}\n```"
+        elif agy_info.get("response"):
+            ans = agy_info['response'].strip()
+            conv_info = res.get("_conv_info")
+            footer = ""
+            if conv_info:
+                turn_c = conv_info.get("turn_count", 1)
+                tok = conv_info.get("total_tokens", 0)
+                footer = f"\n\n_💬 Sesi `{nid}`: Turn {turn_c}/{self.conv_mgr.max_turns} | ~{tok//1000}k tokens_"
+            rot_text = f"\n🔄 _Konteks percakapan di `{nid}` telah penuh dan di-refresh otomatis._" if res.get("_rotated") else ""
+            return f"🤖 *Node `{nid}`:*\n{ans}{footer}{rot_text}"
+        elif agy_info.get("error"):
+            return f"⚠️ *Node `{nid}` error:* `{agy_info['error']}`"
+        elif "error" in res:
+            return f"⚠️ *Node `{nid}`:* {res['error']}"
+        else:
+            return f"ℹ️ *Node `{nid}`:* Berhasil diproses (tanpa output teks)."
+
+    def _is_chain_request(self, prompt: str, target_nodes: List[str]) -> bool:
+        """Determines if query requests a sequential chain between multiple nodes."""
+        if len(target_nodes) < 2:
+            return False
+        p = prompt.lower()
+        if "/chain" in p or "->" in prompt:
+            return True
+        chain_keywords = ["lalu", "kemudian", "setelah itu", "lanjut ke", "berikutnya", "tanggapi"]
+        return any(k in p for k in chain_keywords)
 
     def _guess_diagnostic_cmd(self, prompt: str, node_id: str = "vps") -> Optional[str]:
         """Disabled: all conversational queries pass directly to Antigravity AI for intelligent responses."""
