@@ -6,6 +6,7 @@ Decoupled so CLI changes can be accommodated without affecting the rest of the d
 import asyncio
 import json
 import shutil
+import sys
 from typing import Dict, Any, Optional
 from shared.redactor import Redactor
 
@@ -81,10 +82,16 @@ class AgyAdapter:
             cmd.extend(["--effort", effort])
 
         try:
+            extra_kwargs = {"stdin": asyncio.subprocess.DEVNULL}
+            if sys.platform == "win32":
+                import subprocess
+                extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                **extra_kwargs
             )
 
             try:

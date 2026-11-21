@@ -6,6 +6,7 @@ Injects secrets safely into temporary environment variables.
 """
 import asyncio
 import os
+import sys
 import time
 from typing import Dict, List, Optional
 from shared.manifest import verify_manifest_hash
@@ -134,11 +135,17 @@ class ManifestExecutor:
                 cmd_str = cmd_str.replace(placeholder, f"${env_var}")
 
         try:
+            extra_kwargs = {"stdin": asyncio.subprocess.DEVNULL}
+            if sys.platform == "win32":
+                import subprocess
+                extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
             proc = await asyncio.create_subprocess_shell(
                 cmd_str,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env
+                env=env,
+                **extra_kwargs
             )
 
             try:

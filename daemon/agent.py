@@ -174,10 +174,16 @@ class FleetDaemon:
                     return
 
                 # 2. Execute safe diagnostic shell command
+                extra_kwargs = {"stdin": asyncio.subprocess.DEVNULL}
+                if sys.platform == "win32":
+                    import subprocess
+                    extra_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
                 proc = await asyncio.create_subprocess_shell(
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stderr=asyncio.subprocess.PIPE,
+                    **extra_kwargs
                 )
                 self.active_processes.add(proc)
                 try:

@@ -254,6 +254,17 @@ class FleetCoordinator:
                 topic_id=message.message_thread_id
             )
 
+    async def _safe_edit_message(self, message: Message, text: str, reply_markup=None) -> None:
+        """Safely edit a message, falling back to plain text if Telegram fails parsing entities."""
+        try:
+            await message.edit_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        except Exception as e:
+            logger.warning(f"Markdown edit failed ({e}). Retrying with plain text.")
+            try:
+                await message.edit_text(text, parse_mode=None, reply_markup=reply_markup)
+            except Exception as e2:
+                logger.error(f"Failed to edit message with plain text: {e2}")
+
     # ---------------- Tagging & Chat Handling ----------------
 
     def _parse_target_nodes(self, text: str) -> Tuple[List[str], str]:
@@ -381,10 +392,10 @@ class FleetCoordinator:
                 proposal_text = self.manifest_mgr.format_proposal(registered_manifest)
                 kb = self.manifest_mgr.create_approval_keyboard(registered_manifest)
 
-                await prog_msg.edit_text(
+                await self._safe_edit_message(
+                    prog_msg,
                     f"{proposal_text}\n\n⚠️ *Perintah ini memerlukan persetujuan eksplisit Anda sebelum dijalankan.*",
-                    reply_markup=kb,
-                    parse_mode="Markdown"
+                    reply_markup=kb
                 )
             else:
                 # Read-only CONSULT answer
@@ -404,11 +415,11 @@ class FleetCoordinator:
 
                 full_text = "\n\n".join(summary_lines)
                 display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
-                await prog_msg.edit_text(display_text, parse_mode="Markdown")
+                await self._safe_edit_message(prog_msg, display_text)
 
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
-            await prog_msg.edit_text(f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
+            await self._safe_edit_message(prog_msg, f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
 
     def _guess_diagnostic_cmd(self, prompt: str) -> Optional[str]:
         """Maps common natural query keywords to safe read-only commands."""
@@ -519,7 +530,7 @@ class FleetCoordinator:
 
         final_text = "\n".join(lines)
         display_text, exceeds, full_redacted = self.dlp.sanitize_text(final_text)
-        await call.message.edit_text(display_text, parse_mode="Markdown")
+        await self._safe_edit_message(call.message, display_text)
 
     async def _handle_manifest_revision(self, call: CallbackQuery):
         """User clicked [✏️ Revisi]."""
