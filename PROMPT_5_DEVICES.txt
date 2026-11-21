@@ -1,176 +1,145 @@
 ================================================================================
-           PROMPT ONBOARDING AGY-FLEET (5 PERANGKAT KLIEN)
+       PROMPT ONBOARDING AGY-FLEET (IP TAILSCALE VPS: 100.66.49.13)
 ================================================================================
 
-Repository Resmi: https://github.com/ibrstore/agy-fleet.git
-
-CATATAN SEBELUM EKSEKUSI:
-1. Pastikan VPS Anda sudah terhubung ke Tailscale dengan membuka link:
-   👉 https://login.tailscale.com/a/g1fc45b842017dbfd
-   Setelah login, cek IP Tailscale VPS Anda (misal: 100.x.y.z).
-2. Di setiap prompt di bawah, cukup ganti <IP_TAILSCALE_VPS> dengan IP Tailscale VPS Anda.
-3. Salin masing-masing blok teks ke Antigravity CLI (agy) di perangkat terkait.
+Repository Resmi (Public): https://github.com/ibrstore/agy-fleet.git
+IP Tailscale VPS Control Plane: 100.66.49.13
+Akun Google Tailscale: maraazn069@... (semua device login ke akun ini)
 
 ================================================================================
-1. PROMPT UNTUK PC NAUFAL (pc-naufal)
+0. BALASAN KHUSUS UNTUK PC NAUFAL (pc-naufal) - Yang Sedang Menunggu
 ================================================================================
 
-Kamu bertindak sebagai Node Installer untuk agy-fleet di perangkat pc-naufal.
-Tugasmu adalah menyiapkan agy-daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis sebagai background service.
+1. Tolong install Tailscale otomatis di PC ini sekarang:
+   - Jika Windows: jalankan perintah "winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements"
+   - Jika Linux: jalankan perintah "curl -fsSL https://tailscale.com/install.sh | sh"
+   - Setelah terpasang, jalankan "tailscale up" dan berikan tautan URL loginnya agar saya bisa login dengan akun Google maraazn069@...
 
-Parameter Node ini:
-- NODE_ID: "pc-naufal"
-- DEVICE_TYPE: "pc"
-- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+2. IP Tailscale VPS Control Plane adalah: 100.66.49.13
 
-Instruksi Eksekusi:
-1. Pastikan Tailscale aktif di PC ini dan bisa terhubung ke VPS.
-2. Clone repository agy-fleet ke direktori lokal:
-   - Jika Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
-   - Jika Linux: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
-3. Masuk ke folder agy-fleet, buat virtualenv Python 3.11+, lalu install dependensi:
-   python -m venv .venv
-   pip install -e .
-4. Buat file konfigurasi ~/.agy-fleet/daemon.json dengan isi:
-   {
-     "node_id": "pc-naufal",
-     "device_type": "pc",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
-   }
-5. Pasang sebagai background service otomatis:
-   - Jika Windows (PowerShell Run as Admin): .\scripts\install_service_windows.ps1 -NodeId "pc-naufal"
-   - Jika Linux: ./scripts/install_service_linux.sh daemon pc-naufal
-6. Pastikan service aktif dan mengirim heartbeat setiap 5 detik ke NATS.
+3. Lanjutkan instalasi agy-fleet dari repo publik https://github.com/ibrstore/agy-fleet.git dengan parameter:
+   - NODE_ID: "pc-naufal"
+   - NATS_URL: "nats://100.66.49.13:4222"
+   - Daftarkan sebagai background service.
 
 ================================================================================
-2. PROMPT UNTUK PC DIBA (pc-diba)
+1. PROMPT UNTUK PC DIBA (pc-diba)
 ================================================================================
 
-Kamu bertindak sebagai Node Installer untuk agy-fleet di perangkat pc-diba.
-Tugasmu adalah menyiapkan agy-daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis sebagai background service.
+Tolong lakukan instalasi dan konfigurasi lengkap agy-fleet untuk node "pc-diba":
 
-Parameter Node ini:
-- NODE_ID: "pc-diba"
-- DEVICE_TYPE: "pc"
-- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+1. Pasang & Jalankan Tailscale:
+   - Jika belum ada, install otomatis:
+     • Windows: winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+     • Linux: curl -fsSL https://tailscale.com/install.sh | sh
+   - Jalankan "tailscale up" dan tampilkan link loginnya agar saya login ke akun Google (maraazn069@...).
 
-Instruksi Eksekusi:
-1. Pastikan Tailscale aktif di PC ini dan bisa terhubung ke VPS.
-2. Clone repository agy-fleet ke direktori lokal:
-   - Jika Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
-   - Jika Linux: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
-3. Masuk ke folder agy-fleet, buat virtualenv Python 3.11+, lalu install dependensi:
-   python -m venv .venv
-   pip install -e .
-4. Buat file konfigurasi ~/.agy-fleet/daemon.json dengan isi:
+2. Clone Repository agy-fleet:
+   git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
+
+3. Siapkan Environment:
+   cd ~/agy-fleet && python -m venv .venv && pip install -e .
+
+4. Konfigurasi ~/.agy-fleet/daemon.json:
    {
      "node_id": "pc-diba",
      "device_type": "pc",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
+     "nats_url": "nats://100.66.49.13:4222"
    }
-5. Pasang sebagai background service otomatis:
-   - Jika Windows (PowerShell Run as Admin): .\scripts\install_service_windows.ps1 -NodeId "pc-diba"
-   - Jika Linux: ./scripts/install_service_linux.sh daemon pc-diba
-6. Pastikan service aktif dan mengirim heartbeat setiap 5 detik ke NATS.
+
+5. Pasang Background Service:
+   - Windows (PowerShell Admin): .\scripts\install_service_windows.ps1 -NodeId "pc-diba"
+   - Linux: ./scripts/install_service_linux.sh daemon pc-diba
 
 ================================================================================
-3. PROMPT UNTUK LAPTOP ASUS (lap-asus)
+2. PROMPT UNTUK LAPTOP ASUS (lap-asus)
 ================================================================================
 
-Kamu bertindak sebagai Node Installer untuk agy-fleet di perangkat lap-asus.
-Tugasmu adalah menyiapkan agy-daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis sebagai background service.
+Tolong lakukan instalasi dan konfigurasi lengkap agy-fleet untuk node "lap-asus":
 
-Parameter Node ini:
-- NODE_ID: "lap-asus"
-- DEVICE_TYPE: "laptop"
-- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+1. Pasang & Jalankan Tailscale:
+   - Jika belum ada, install otomatis:
+     • Windows: winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+     • macOS: brew install tailscale
+     • Linux: curl -fsSL https://tailscale.com/install.sh | sh
+   - Jalankan "tailscale up" dan tampilkan link loginnya agar saya login ke akun Google (maraazn069@...).
 
-Instruksi Eksekusi:
-1. Pastikan Tailscale aktif di Laptop ini dan bisa terhubung ke VPS.
-2. Clone repository agy-fleet ke direktori lokal:
-   - Jika Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
-   - Jika macOS/Linux: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
-3. Masuk ke folder agy-fleet, buat virtualenv Python 3.11+, lalu install dependensi:
-   python -m venv .venv
-   pip install -e .
-4. Buat file konfigurasi ~/.agy-fleet/daemon.json dengan isi:
+2. Clone Repository agy-fleet:
+   git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
+
+3. Siapkan Environment:
+   cd ~/agy-fleet && python -m venv .venv && pip install -e .
+
+4. Konfigurasi ~/.agy-fleet/daemon.json:
    {
      "node_id": "lap-asus",
      "device_type": "laptop",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
+     "nats_url": "nats://100.66.49.13:4222"
    }
-5. Pasang sebagai background service otomatis:
-   - Jika Windows (PowerShell Run as Admin): .\scripts\install_service_windows.ps1 -NodeId "lap-asus"
-   - Jika macOS: ./scripts/install_service_macos.sh lap-asus
-   - Jika Linux: ./scripts/install_service_linux.sh daemon lap-asus
-6. Pastikan service aktif dan mengirim heartbeat setiap 5 detik ke NATS.
+
+5. Pasang Background Service:
+   - Windows (PowerShell Admin): .\scripts\install_service_windows.ps1 -NodeId "lap-asus"
+   - macOS: ./scripts/install_service_macos.sh lap-asus
+   - Linux: ./scripts/install_service_linux.sh daemon lap-asus
 
 ================================================================================
-4. PROMPT UNTUK LAPTOP USER (lap-user)
+3. PROMPT UNTUK LAPTOP USER (lap-user)
 ================================================================================
 
-Kamu bertindak sebagai Node Installer untuk agy-fleet di perangkat lap-user.
-Tugasmu adalah menyiapkan agy-daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis sebagai background service.
+Tolong lakukan instalasi dan konfigurasi lengkap agy-fleet untuk node "lap-user":
 
-Parameter Node ini:
-- NODE_ID: "lap-user"
-- DEVICE_TYPE: "laptop"
-- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+1. Pasang & Jalankan Tailscale:
+   - Jika belum ada, install otomatis:
+     • Windows: winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+     • macOS: brew install tailscale
+     • Linux: curl -fsSL https://tailscale.com/install.sh | sh
+   - Jalankan "tailscale up" dan tampilkan link loginnya agar saya login ke akun Google (maraazn069@...).
 
-Instruksi Eksekusi:
-1. Pastikan Tailscale aktif di Laptop ini dan bisa terhubung ke VPS.
-2. Clone repository agy-fleet ke direktori lokal:
-   - Jika Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
-   - Jika macOS/Linux: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
-3. Masuk ke folder agy-fleet, buat virtualenv Python 3.11+, lalu install dependensi:
-   python -m venv .venv
-   pip install -e .
-4. Buat file konfigurasi ~/.agy-fleet/daemon.json dengan isi:
+2. Clone Repository agy-fleet:
+   git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
+
+3. Siapkan Environment:
+   cd ~/agy-fleet && python -m venv .venv && pip install -e .
+
+4. Konfigurasi ~/.agy-fleet/daemon.json:
    {
      "node_id": "lap-user",
      "device_type": "laptop",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
+     "nats_url": "nats://100.66.49.13:4222"
    }
-5. Pasang sebagai background service otomatis:
-   - Jika Windows (PowerShell Run as Admin): .\scripts\install_service_windows.ps1 -NodeId "lap-user"
-   - Jika macOS: ./scripts/install_service_macos.sh lap-user
-   - Jika Linux: ./scripts/install_service_linux.sh daemon lap-user
-6. Pastikan service aktif dan mengirim heartbeat setiap 5 detik ke NATS.
+
+5. Pasang Background Service:
+   - Windows (PowerShell Admin): .\scripts\install_service_windows.ps1 -NodeId "lap-user"
+   - macOS: ./scripts/install_service_macos.sh lap-user
+   - Linux: ./scripts/install_service_linux.sh daemon lap-user
 
 ================================================================================
-5. PROMPT UNTUK PC NCI (pc-nci)
+4. PROMPT UNTUK PC NCI (pc-nci)
 ================================================================================
 
-Kamu bertindak sebagai Node Installer untuk agy-fleet di perangkat pc-nci.
-Tugasmu adalah menyiapkan agy-daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis sebagai background service.
+Tolong lakukan instalasi dan konfigurasi lengkap agy-fleet untuk node "pc-nci":
 
-Parameter Node ini:
-- NODE_ID: "pc-nci"
-- DEVICE_TYPE: "pc"
-- REPO_URL: "https://github.com/ibrstore/agy-fleet.git"
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+1. Pasang & Jalankan Tailscale:
+   - Jika belum ada, install otomatis:
+     • Windows: winget install Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+     • Linux: curl -fsSL https://tailscale.com/install.sh | sh
+   - Jalankan "tailscale up" dan tampilkan link loginnya agar saya login ke akun Google (maraazn069@...).
 
-Instruksi Eksekusi:
-1. Pastikan Tailscale aktif di PC ini dan bisa terhubung ke VPS.
-2. Clone repository agy-fleet ke direktori lokal:
-   - Jika Windows: git clone https://github.com/ibrstore/agy-fleet.git $HOME\agy-fleet
-   - Jika Linux: git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
-3. Masuk ke folder agy-fleet, buat virtualenv Python 3.11+, lalu install dependensi:
-   python -m venv .venv
-   pip install -e .
-4. Buat file konfigurasi ~/.agy-fleet/daemon.json dengan isi:
+2. Clone Repository agy-fleet:
+   git clone https://github.com/ibrstore/agy-fleet.git ~/agy-fleet
+
+3. Siapkan Environment:
+   cd ~/agy-fleet && python -m venv .venv && pip install -e .
+
+4. Konfigurasi ~/.agy-fleet/daemon.json:
    {
      "node_id": "pc-nci",
      "device_type": "pc",
-     "nats_url": "nats://<IP_TAILSCALE_VPS>:4222"
+     "nats_url": "nats://100.66.49.13:4222"
    }
-5. Pasang sebagai background service otomatis:
-   - Jika Windows (PowerShell Run as Admin): .\scripts\install_service_windows.ps1 -NodeId "pc-nci"
-   - Jika Linux: ./scripts/install_service_linux.sh daemon pc-nci
-6. Pastikan service aktif dan mengirim heartbeat setiap 5 detik ke NATS.
+
+5. Pasang Background Service:
+   - Windows (PowerShell Admin): .\scripts\install_service_windows.ps1 -NodeId "pc-nci"
+   - Linux: ./scripts/install_service_linux.sh daemon pc-nci
 
 ================================================================================

@@ -17,7 +17,7 @@ Tugasmu adalah menyiapkan agy-fleet daemon di mesin ini agar terhubung ke Contro
 
 Parameter Node ini:
 - NODE_ID: "<NAMA_NODE>" (pilihan: pc-naufal | pc-diba | lap-asus | lap-user | pc-nci)
-- NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
+- NATS_URL: "nats://100.66.49.13:4222"
 
 Instruksi Eksekusi:
 1. Pastikan koneksi Tailscale ke VPS aktif (tes ping ke <IP_TAILSCALE_VPS>).
