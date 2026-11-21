@@ -23,8 +23,28 @@ SUBJECT_NODE_CANCEL = "fleet.node.{node_id}.cancel"
 SUBJECT_BROADCAST = "fleet.broadcast"
 SUBJECT_ORCHESTRATOR_EVENTS = "fleet.orchestrator.events"
 
-# Known fleet node identifiers (2 PC, 2 Laptop, 1 VPS)
-FLEET_NODES: List[str] = ["vps", "pc1", "pc2", "laptop1", "laptop2"]
+# Known fleet node identifiers (VPS, 3 PC, 2 Laptop)
+FLEET_NODES: List[str] = [
+    "vps",
+    "pc-naufal",
+    "pc-diba",
+    "lap-asus",
+    "lap-user",
+    "pc-nci",
+]
+
+# Legacy / shorthand aliases mapping to canonical node IDs
+NODE_ALIASES: dict[str, str] = {
+    "pc1": "pc-naufal",
+    "pc2": "pc-diba",
+    "laptop1": "lap-asus",
+    "laptop2": "lap-user",
+    "naufal": "pc-naufal",
+    "diba": "pc-diba",
+    "asus": "lap-asus",
+    "user": "lap-user",
+    "nci": "pc-nci",
+}
 
 
 @dataclass

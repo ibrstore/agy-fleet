@@ -22,6 +22,7 @@ from nats.aio.client import Client as NATSClient
 from shared.config import (
     PRESENCE_KV_BUCKET,
     FLEET_NODES,
+    NODE_ALIASES,
     SUBJECT_NODE_CONSULT,
     SUBJECT_NODE_MANIFEST,
     SUBJECT_BROADCAST,
@@ -133,10 +134,12 @@ class FleetCoordinator:
             "• `/stop` atau `/abort` - Hentikan paksa seluruh proses aktif\n"
             "• `/update @online` - Git pull & restart daemon pada node aktif\n\n"
             "💡 *Format Tagging:*\n"
-            "• `pc1: cek disk`\n"
-            "• `pc1 vps: bandingkan port`\n"
-            "• `@online: cek memori`\n"
-            "• `@all: status layanan`"
+            "• `pc-naufal: cek disk`\n"
+            "• `pc-naufal vps: bandingkan port`\n"
+            "• `lap-asus: cek memori`\n"
+            "• `@online: status semua mesin online`\n"
+            "• `@all: status layanan`\n\n"
+            "*(Daftar node: vps, pc-naufal, pc-diba, lap-asus, lap-user, pc-nci)*"
         )
         await self.dlp.send_safe_message(self.bot, message.chat.id, text, topic_id=message.message_thread_id)
 
@@ -256,12 +259,15 @@ class FleetCoordinator:
     def _parse_target_nodes(self, text: str) -> Tuple[List[str], str]:
         """
         Extracts target nodes from message prefix.
-        e.g. "pc1: cek disk" -> (["pc1"], "cek disk")
-        "pc1 vps: cek port" -> (["pc1", "vps"], "cek port")
+        Supports new canonical names (pc-naufal, pc-diba, lap-asus, lap-user, pc-nci, vps)
+        as well as legacy aliases (pc1, pc2, laptop1, laptop2).
+        e.g. "pc-naufal: cek disk" -> (["pc-naufal"], "cek disk")
+        "pc-naufal vps: cek port" -> (["pc-naufal", "vps"], "cek port")
         "@online: cek ram" -> (["@online"], "cek ram")
         """
-        pattern = r"^(@all|@online|(?:(?:vps|pc1|pc2|laptop1|laptop2)[,\s]*)+):?\s*(.*)$"
-        match = re.match(pattern, text.strip(), re.IGNORECASE)
+        clean_text = text.strip()
+        pattern = r"^(@all|@online|(?:[a-zA-Z0-9_\-]+[,\s]*)+):?\s*(.*)$"
+        match = re.match(pattern, clean_text, re.IGNORECASE)
         if match:
             nodes_part = match.group(1).lower().strip()
             rest = match.group(2).strip()
@@ -271,11 +277,18 @@ class FleetCoordinator:
                 return self.presence.get_online_nodes() or ["vps"], rest
             else:
                 raw_nodes = re.split(r"[,\s]+", nodes_part)
-                valid_nodes = [n for n in raw_nodes if n in FLEET_NODES]
-                return valid_nodes or ["vps"], rest
+                valid_nodes = []
+                for n in raw_nodes:
+                    # Resolve aliases if any
+                    canonical = NODE_ALIASES.get(n, n)
+                    if canonical in FLEET_NODES and canonical not in valid_nodes:
+                        valid_nodes.append(canonical)
+
+                if valid_nodes:
+                    return valid_nodes, rest
 
         # Default: target vps (or coordinator node)
-        return ["vps"], text.strip()
+        return ["vps"], clean_text
 
     async def _handle_chat_message(self, message: Message):
         """Main chat handler: default = CONSULT (Read-Only Fact Gathering)."""

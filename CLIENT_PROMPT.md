@@ -1,8 +1,13 @@
 # Client Onboarding Prompt (`CLIENT_PROMPT.md`)
 
-Gunakan prompt di bawah ini untuk diberikan langsung ke sesi lokal `agy` di masing-masing perangkat (**PC 1**, **PC 2**, **Laptop 1**, **Laptop 2**).
+Gunakan prompt di bawah ini untuk diberikan langsung ke sesi lokal `agy` di masing-masing perangkat klien:
+- **`pc-naufal`** (PC Naufal)
+- **`pc-diba`** (PC Diba)
+- **`lap-asus`** (Laptop Asus)
+- **`lap-user`** (Laptop User)
+- **`pc-nci`** (PC Nci)
 
-Salin teks berikut ke prompt `agy`, lalu ubah parameter `<NAMA_NODE>` (misal: `pc1`, `pc2`, `laptop1`, atau `laptop2`) dan `<IP_TAILSCALE_VPS>` (misal: `100.64.0.1`):
+Salin teks prompt di bawah ini ke prompt `agy`, lalu cukup ubah parameter `<NAMA_NODE>` (misal: `pc-naufal`, `pc-diba`, `lap-asus`, `lap-user`, atau `pc-nci`) dan `<IP_TAILSCALE_VPS>` (misal: IP Tailscale VPS Anda, contoh `100.64.0.1`):
 
 ---
 
@@ -11,7 +16,7 @@ Kamu bertindak sebagai Node Installer untuk agy-fleet.
 Tugasmu adalah menyiapkan agy-fleet daemon di mesin ini agar terhubung ke Control Plane VPS secara otomatis dan aman sebagai background service.
 
 Parameter Node ini:
-- NODE_ID: "<NAMA_NODE>" (contoh: pc1 / pc2 / laptop1 / laptop2)
+- NODE_ID: "<NAMA_NODE>" (pilihan: pc-naufal | pc-diba | lap-asus | lap-user | pc-nci)
 - NATS_URL: "nats://<IP_TAILSCALE_VPS>:4222"
 
 Instruksi Eksekusi:

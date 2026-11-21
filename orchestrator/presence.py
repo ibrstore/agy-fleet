@@ -20,10 +20,11 @@ class PresenceMonitor:
         self.kv = kv
         self.nodes_state: Dict[str, NodeHeartbeat] = {}
         for nid in FLEET_NODES:
+            dev_type = "vps" if nid == "vps" else ("laptop" if ("lap" in nid or "laptop" in nid) else "pc")
             self.nodes_state[nid] = NodeHeartbeat(
                 node_id=nid,
                 name=nid.upper(),
-                device_type="vps" if nid == "vps" else ("laptop" if "laptop" in nid else "pc"),
+                device_type=dev_type,
                 os_name="unknown",
                 ip="offline",
                 status=NodeStatus.OFFLINE,
@@ -83,5 +84,5 @@ class PresenceMonitor:
             else:
                 lines.append(f"🔴 *{nid}* • _OFFLINE_")
 
-        lines.append(f"\n⚡ *Status:* `{online_count}/5` node online | Tag: `@online`, `@all`")
+        lines.append(f"\n⚡ *Status:* `{online_count}/{len(FLEET_NODES)}` node online | Tag: `@online`, `@all`")
         return "\n".join(lines)

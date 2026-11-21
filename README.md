@@ -1,6 +1,6 @@
 # 🛰️ agy-fleet: Distributed Multi-Node Antigravity Orchestrator
 
-Monorepo siap pakai untuk menyatukan dan mengendalikan 5 perangkat (**2 PC, 2 Laptop, 1 VPS**) yang masing-masing menjalankan Antigravity CLI (`agy`) secara lokal dengan akun Google terpisah, dikendalikan dari 1 Grup Telegram resmi (mendukung Forum Topics) menggunakan 1 Bot Telegram melalui jaringan privat **Tailscale** dan **NATS JetStream**.
+Monorepo siap pakai untuk menyatukan dan mengendalikan 6 perangkat (**vps, pc-naufal, pc-diba, lap-asus, lap-user, pc-nci**) yang masing-masing menjalankan Antigravity CLI (`agy`) secara lokal dengan akun Google terpisah, dikendalikan dari 1 Grup atau Direct Message Telegram menggunakan 1 Bot Telegram melalui jaringan privat **Tailscale** dan **NATS JetStream**.
 
 ---
 
@@ -24,19 +24,19 @@ Monorepo siap pakai untuk menyatukan dan mengendalikan 5 perangkat (**2 PC, 2 La
                                                  |
                    [ NATS JetStream & KV via IP Privat Tailscale (100.x.y.z) ]
                                                  |
-         +-------------------+-------------------+-------------------+-------------------+
-         |                   |                   |                   |                   |
-         v                   v                   v                   v                   v
-+-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
-|   Node: VPS     | |   Node: PC 1    | |   Node: PC 2    | | Node: Laptop 1  | | Node: Laptop 2  |
-| daemon/ (Linux) | | daemon/ (Win/Lx)| | daemon/ (Win/Lx)| | daemon/ (macOS) | | daemon/ (Win/Lx)|
-| • agy Adapter   | | • agy Adapter   | | • agy Adapter   | | • agy Adapter   | | • agy Adapter   |
-| • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  |
-| • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     |
-| • Consult Guard | | • Consult Guard | | • Consult Guard | | • Consult Guard | | • Consult Guard |
-| • Manifest Exec | | • Manifest Exec | | • Manifest Exec | | • Manifest Exec | | • Manifest Exec |
-| • Secret Vault  | | • Secret Vault  | | • Secret Vault  | | • Secret Vault  | | • Secret Vault  |
-+-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
+         +-------------------+-------------------+-------------------+-------------------+-------------------+
+         |                   |                   |                   |                   |                   |
+         v                   v                   v                   v                   v                   v
++-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
+|   Node: VPS     | | Node: pc-naufal | | Node: pc-diba   | | Node: lap-asus  | | Node: lap-user  | | Node: pc-nci    |
+| daemon/ (Linux) | | daemon/ (Win/Lx)| | daemon/ (Win/Lx)| | daemon/ (macOS) | | daemon/ (Win/Lx)| | daemon/ (Win/Lx)|
+| • agy Adapter   | | • agy Adapter   | | • agy Adapter   | | • agy Adapter   | | • agy Adapter   | | • agy Adapter   |
+| • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  | | • 5s Heartbeat  |
+| • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     | | • Wake-Lock     |
+| • Consult Guard | | • Consult Guard | | • Consult Guard | | • Consult Guard | | • Consult Guard | | • Consult Guard |
+| • Manifest Exec | | • Manifest Exec | | • Manifest Exec | | • Manifest Exec | | • Manifest Exec | | • Manifest Exec |
+| • Secret Vault  | | • Secret Vault  | | • Secret Vault  | | • Secret Vault  | | • Secret Vault  | | • Secret Vault  |
++-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
 ```
 
 ---
