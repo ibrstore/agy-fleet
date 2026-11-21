@@ -383,6 +383,7 @@ class FleetCoordinator:
 
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
                 active_conv_id = self.conv_mgr.get_conversation_id(node_id)
+                diag_cmd = self._guess_diagnostic_cmd(cleaned_prompt, node_id=node_id)
                 req_data = {
                     "prompt": f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}",
                     "command": diag_cmd,
@@ -440,6 +441,8 @@ class FleetCoordinator:
                     agy_info = res.get("agy", {})
                     if "stdout" in res and res["stdout"]:
                         summary_lines.append(f"🖥️ *Node `{nid}`:*\n```\n{res['stdout'][:800]}\n```")
+                    elif res.get("stderr"):
+                        summary_lines.append(f"⚠️ *Node `{nid}`:*\n```\n{res['stderr'][:800]}\n```")
                     elif agy_info.get("response"):
                         ans = agy_info['response'].strip()
                         conv_info = res.get("_conv_info")
@@ -467,8 +470,12 @@ class FleetCoordinator:
             logger.error(f"Error processing chat message: {e}")
             await self._safe_edit_message(prog_msg, f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
 
-    def _guess_diagnostic_cmd(self, prompt: str) -> Optional[str]:
-        """Maps common natural query keywords to safe read-only commands."""
+    def _guess_diagnostic_cmd(self, prompt: str, node_id: str = "vps") -> Optional[str]:
+        """Maps common natural query keywords to safe read-only commands for Linux nodes."""
+        if node_id != "vps":
+            # For Windows nodes, let local agy AI handle natural language queries
+            return None
+
         p = prompt.lower()
         if "disk" in p or "storage" in p:
             return "df -h"
