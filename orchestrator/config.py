@@ -35,12 +35,14 @@ class OrchestratorConfig:
         except ValueError:
             owner_id = 0
 
-        # Allowed Group ID
+        # Allowed Group ID (defaults to owner_id if not set, enabling direct 1-on-1 private chat)
         group_raw = vault.get_secret("ALLOWED_GROUP_ID") or os.getenv("ALLOWED_GROUP_ID", "0")
         try:
             group_id = int(group_raw)
         except ValueError:
             group_id = 0
+        if group_id == 0 and owner_id != 0:
+            group_id = owner_id
 
         # NATS
         nats_url = vault.get_secret("NATS_URL") or os.getenv("FLEET_NATS_URL", "nats://127.0.0.1:4222")

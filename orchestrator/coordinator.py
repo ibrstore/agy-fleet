@@ -539,12 +539,12 @@ class FleetCoordinator:
 
 def main():
     cfg = OrchestratorConfig.load()
-    if not cfg.telegram_bot_token or not cfg.owner_user_id or not cfg.allowed_group_id:
+    if not cfg.telegram_bot_token or not cfg.owner_user_id:
         print("❌ Kredensial Orchestrator belum lengkap.")
         print("Gunakan utility 'fleet-secret' untuk mengatur:")
         print("  fleet-secret set TELEGRAM_BOT_TOKEN")
         print("  fleet-secret set OWNER_USER_ID")
-        print("  fleet-secret set ALLOWED_GROUP_ID")
+        print("  fleet-secret set ALLOWED_GROUP_ID (opsional: jika tidak diisi, otomatis mode Direct Message / Japri)")
         sys.exit(1)
 
     coordinator = FleetCoordinator(cfg)

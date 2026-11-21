@@ -34,6 +34,20 @@ async def test_owner_in_allowed_group_accepted(auth_middleware):
 
 
 @pytest.mark.asyncio
+async def test_owner_in_direct_private_chat_accepted(auth_middleware):
+    handler = AsyncMock(return_value="OK_PRIVATE")
+    message = MagicMock(spec=Message)
+    message.chat = MagicMock(spec=Chat, id=OWNER_USER_ID, type="private")
+    message.from_user = MagicMock(spec=User, id=OWNER_USER_ID, is_bot=False)
+    message.forward_date = None
+    message.forward_origin = None
+
+    result = await auth_middleware(handler, message, {})
+    assert result == "OK_PRIVATE"
+    handler.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_non_owner_rejected(auth_middleware):
     handler = AsyncMock(return_value="OK")
     message = MagicMock(spec=Message)

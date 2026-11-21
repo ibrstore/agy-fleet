@@ -35,9 +35,14 @@ class StrictOwnerAuthMiddleware(BaseMiddleware):
                 logger.warning("Auth rejected: Message from a bot account.")
                 return None
 
-            # Validate chat and user IDs
-            if event.chat.id != self.allowed_group_id:
-                logger.warning(f"Auth rejected: Message from unallowed chat_id {event.chat.id} (expected {self.allowed_group_id})")
+            # Validate chat and user IDs (supports both designated group and direct private chat with owner)
+            chat_type = getattr(event.chat, "type", None)
+            is_valid_chat = (
+                event.chat.id == self.allowed_group_id
+                or (chat_type == "private" and event.chat.id == self.owner_user_id)
+            )
+            if not is_valid_chat:
+                logger.warning(f"Auth rejected: Message from unallowed chat_id {event.chat.id} (expected {self.allowed_group_id} or private {self.owner_user_id})")
                 return None
 
             if not event.from_user or event.from_user.id != self.owner_user_id:
@@ -48,8 +53,13 @@ class StrictOwnerAuthMiddleware(BaseMiddleware):
         elif isinstance(event, CallbackQuery):
             chat_id = event.message.chat.id if event.message else None
             user_id = event.from_user.id if event.from_user else None
+            cb_chat_type = getattr(event.message.chat, "type", None) if event.message else None
+            is_valid_cb_chat = (
+                chat_id == self.allowed_group_id
+                or (cb_chat_type == "private" and chat_id == self.owner_user_id)
+            )
 
-            if chat_id != self.allowed_group_id or user_id != self.owner_user_id:
+            if not is_valid_cb_chat or user_id != self.owner_user_id:
                 logger.warning(f"Auth rejected: CallbackQuery from chat {chat_id}, user {user_id}")
                 await event.answer("⛔ Akses ditolak: Hanya pemilik resmi yang diizinkan.", show_alert=True)
                 return None
