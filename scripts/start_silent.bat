@@ -1,8 +1,4 @@
 @echo off
-:: Starts agy-fleet daemon completely silent in background without any open window
-cd /d "%~dp0\.."
-if exist ".venv\Scripts\pythonw.exe" (
-    start "" ".venv\Scripts\pythonw.exe" -m daemon.agent
-) else (
-    start "" pythonw -m daemon.agent
-)
+:: Launches self-healing watchdog daemon completely hidden in background
+cd /d "%~dp0"
+start "" wscript.exe "%~dp0run_watchdog_hidden.vbs"

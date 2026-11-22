@@ -21,19 +21,12 @@ if (-not (Test-Path $PythonExe)) {
 # Gunakan pythonw.exe jika ada (menjalankan tanpa jendela konsol sama sekali)
 $TargetPython = if (Test-Path $PythonWExe) { $PythonWExe } else { $PythonExe }
 
-# 1. Buat Runner VBScript sebagai fallback (eksekusi hidden window)
-$VbsPath = Join-Path $RepoDir "scripts\run_daemon_hidden.vbs"
-$VbsContent = @"
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = "$RepoDir"
-WshShell.Run """" & "$TargetPython" & """ -m daemon.agent", 0, False
-Set WshShell = Nothing
-"@
-[System.IO.File]::WriteAllText($VbsPath, $VbsContent)
+# 1. Pastikan script watchdog hidden tersedia
+$VbsPath = Join-Path $RepoDir "scripts\run_watchdog_hidden.vbs"
 
-# 2. Daftarkan langsung ke Task Scheduler dengan pythonw.exe (Tersembunyi & Dipantau Langsung)
+# 2. Daftarkan ke Task Scheduler dengan Watchdog Self-Healing (Hidden Background)
 try {
-    $Action = New-ScheduledTaskAction -Execute $TargetPython -Argument "-m daemon.agent" -WorkingDirectory $RepoDir
+    $Action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$VbsPath`"" -WorkingDirectory $RepoDir
     $Trigger = New-ScheduledTaskTrigger -AtLogOn
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
     
@@ -41,8 +34,8 @@ try {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
     # Daftarkan task baru
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "Antigravity Fleet Daemon for $NodeId"
-    Write-Host "✅ Task Scheduler '$TaskName' berhasil didaftarkan."
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "Antigravity Fleet Self-Healing Watchdog for $NodeId"
+    Write-Host "✅ Task Scheduler '$TaskName' berhasil didaftarkan dengan Watchdog Self-Healing."
 } catch {
     Write-Warning "Gagal mendaftarkan Task Scheduler (butuh Run as Administrator): $_"
 }
@@ -53,13 +46,13 @@ try {
     $ShortcutPath = Join-Path $StartupFolder "AntigravityFleetDaemon.lnk"
     $WshShell = New-Object -ComObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = $TargetPython
-    $Shortcut.Arguments = "-m daemon.agent"
+    $Shortcut.TargetPath = "wscript.exe"
+    $Shortcut.Arguments = "`"$VbsPath`""
     $Shortcut.WorkingDirectory = $RepoDir
     $Shortcut.WindowStyle = 7
-    $Shortcut.Description = "Auto-start Antigravity Fleet Daemon"
+    $Shortcut.Description = "Auto-start Antigravity Fleet Daemon Watchdog"
     $Shortcut.Save()
-    Write-Host "✅ Shortcut fail-safe berhasil dipasang di folder Startup Windows."
+    Write-Host "✅ Shortcut fail-safe Watchdog berhasil dipasang di folder Startup Windows."
 } catch {
     Write-Warning "Gagal memasang shortcut di folder startup: $_"
 }
@@ -82,8 +75,8 @@ try {
     Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     Write-Host "✅ Daemon telah aktif berjalan via Task Scheduler!"
 } catch {
-    Start-Process -FilePath $TargetPython -ArgumentList "-m daemon.agent" -WorkingDirectory $RepoDir -WindowStyle Hidden
-    Write-Host "✅ Daemon telah aktif berjalan di background!"
+    Start-Process "wscript.exe" -ArgumentList "`"$VbsPath`"" -WorkingDirectory $RepoDir
+    Write-Host "✅ Daemon telah aktif berjalan di background via Watchdog!"
 }
 
 Write-Host "✅ Daemon telah aktif berjalan di background!"
