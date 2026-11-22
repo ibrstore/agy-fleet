@@ -463,21 +463,12 @@ class FleetCoordinator:
                     step_num = idx + 1
                     targets_str = f"`{nid}`"
 
-                    # Show current step progress
-                    lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* - Langkah [{step_num}/{len(target_nodes)}]\n"]
+                    # Clean step progress indicator without prematurely dumping huge responses
+                    lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)*\n"]
                     for prev_nid in target_nodes:
                         if prev_nid in completed_results:
-                            res_text = self._format_node_result(prev_nid, completed_results[prev_nid])
-                            if len(res_text) > 1200:
-                                cut = res_text[:1200].rfind("\n")
-                                if cut < 600:
-                                    cut = 1200
-                                snip = res_text[:cut].rstrip()
-                                if snip.count("```") % 2 != 0:
-                                    snip += "\n```"
-                                res_text = snip + "\n\n_...(jawaban lengkap diteruskan ke langkah berikutnya)_"
-                            lines.append(res_text)
-                    lines.append(f"\n⏳ _Sedang memproses langkah {step_num} pada {targets_str}..._")
+                            lines.append(f"✅ *Node `{prev_nid}`:* Analisis selesai.")
+                    lines.append(f"\n⏳ *Node `{nid}`:* _Sedang menganalisis & merumuskan tanggapan (Langkah {step_num}/{len(target_nodes)})..._")
 
                     full_text = "\n\n".join(lines)
                     display_text, _, _ = self.dlp.sanitize_text(full_text)
