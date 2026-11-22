@@ -89,3 +89,66 @@ def test_build_multi_node_preview(coordinator):
     assert len(preview) <= 3500
     assert "A" * 3000 in full
     assert "B" * 3000 in full
+
+
+def test_extract_mode_override():
+    # Test --fast / --low
+    m, rest = FleetCoordinator._extract_mode_override("cek status disk --fast")
+    assert m == "fast"
+    assert rest == "cek status disk"
+
+    m, rest = FleetCoordinator._extract_mode_override("--low analisa memori")
+    assert m == "fast"
+    assert rest == "analisa memori"
+
+    # Test --deep / --high
+    m, rest = FleetCoordinator._extract_mode_override("analisa arsitektur cctv --deep")
+    assert m == "deep"
+    assert rest == "analisa arsitektur cctv"
+
+    m, rest = FleetCoordinator._extract_mode_override("--high rancang database")
+    assert m == "deep"
+    assert rest == "rancang database"
+
+    # Test --balanced / --medium
+    m, rest = FleetCoordinator._extract_mode_override("hitung perkiraan trafik --balanced")
+    assert m == "balanced"
+    assert rest == "hitung perkiraan trafik"
+
+    # Test without flags
+    m, rest = FleetCoordinator._extract_mode_override("halo selamat pagi")
+    assert m is None
+    assert rest == "halo selamat pagi"
+
+
+def test_reasoning_mode_persistence(tmp_path, monkeypatch):
+    test_settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr("orchestrator.coordinator.SETTINGS_DIR", tmp_path)
+    monkeypatch.setattr("orchestrator.coordinator.SETTINGS_FILE", test_settings_file)
+
+    # Initially defaults to deep
+    assert FleetCoordinator._get_active_reasoning_mode() == "deep"
+
+    # Set to fast
+    assert FleetCoordinator._set_reasoning_mode("fast") is True
+    assert FleetCoordinator._get_active_reasoning_mode() == "fast"
+
+    # Set to balanced
+    assert FleetCoordinator._set_reasoning_mode("balanced") is True
+    assert FleetCoordinator._get_active_reasoning_mode() == "balanced"
+
+    # Invalid mode returns False and doesn't overwrite
+    assert FleetCoordinator._set_reasoning_mode("invalid_mode") is False
+    assert FleetCoordinator._get_active_reasoning_mode() == "balanced"
+
+
+def test_mode_keyboard_and_text():
+    kb = FleetCoordinator._build_mode_keyboard("deep")
+    assert len(kb.inline_keyboard) == 2
+    # Check deep has checked radio button
+    assert "🔘" in kb.inline_keyboard[1][0].text
+    assert "fleet_mode:deep" == kb.inline_keyboard[1][0].callback_data
+
+    txt = FleetCoordinator._format_mode_text("deep")
+    assert "Deep Reasoning (High)" in txt
+    assert "gemini-3.8-flash-high" in txt

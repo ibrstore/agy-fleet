@@ -12,10 +12,11 @@ import signal
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 import nats
 from nats.aio.client import Client as NATSClient
 
@@ -46,6 +47,36 @@ from orchestrator.conversations import ConversationManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("fleet-orchestrator")
+
+SETTINGS_DIR = Path.home() / ".agy-fleet"
+SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
+REASONING_MODES: Dict[str, Dict[str, Any]] = {
+    "deep": {
+        "name": "deep",
+        "label": "🧠 Deep Reasoning (High)",
+        "model": "gemini-3.8-flash-high",
+        "effort": "high",
+        "timeout_sec": 600,
+        "desc": "Penalaran mendalam untuk arsitektur kompleks & analisis komprehensif (Timeout: 10m).",
+    },
+    "balanced": {
+        "name": "balanced",
+        "label": "⚖️ Balanced (Medium)",
+        "model": "gemini-3.8-flash-medium",
+        "effort": "medium",
+        "timeout_sec": 300,
+        "desc": "Keseimbangan kecepatan dan analisis cerdas (Timeout: 5m).",
+    },
+    "fast": {
+        "name": "fast",
+        "label": "⚡ Fast (Low)",
+        "model": "gemini-3.8-flash-low",
+        "effort": "low",
+        "timeout_sec": 180,
+        "desc": "Respons super cepat, minimal reasoning delay (Timeout: 3m).",
+    },
+}
 
 
 class FleetCoordinator:
@@ -107,16 +138,17 @@ class FleetCoordinator:
         self.dp.message.register(self._cmd_start, Command("start", "help"))
         self.dp.message.register(self._cmd_status, Command("status"))
         self.dp.message.register(self._cmd_stop, Command("stop", "abort"))
-        self.dp.message.register(self._cmd_mode, Command("mode"))
+        self.dp.message.register(self._cmd_mode, Command("mode", "model", "speed"))
         self.dp.message.register(self._cmd_update, Command("update"))
         self.dp.message.register(self._cmd_dashboard, Command("dashboard"))
         self.dp.message.register(self._cmd_getfile, Command("file", "getfile"))
         self.dp.message.register(self._cmd_new_conversation, Command("new", "reset"))
 
-        # Callback query handlers for Inline Manifest Approval
+        # Callback query handlers for Inline Manifest Approval & Reasoning Mode
         self.dp.callback_query.register(self._handle_manifest_approval, F.data.startswith("man:app:"))
         self.dp.callback_query.register(self._handle_manifest_revision, F.data.startswith("man:rev:"))
         self.dp.callback_query.register(self._handle_manifest_cancel, F.data.startswith("man:can:"))
+        self.dp.callback_query.register(self._handle_mode_selection, F.data.startswith("fleet_mode:"))
 
         # Generic chat handler for consult/discussion
         self.dp.message.register(self._handle_chat_message)
@@ -133,7 +165,8 @@ class FleetCoordinator:
             "📌 *Perintah Utama:*\n"
             "• `/status` - Cek kehadiran node & beban sistem\n"
             "• `/dashboard` - Pinned dashboard live status di topik ini\n"
-            "• `/mode ringkas|pantau` - Atur tingkat detail diskusi\n"
+            "• `/mode` - Menu tombol pilihan model & reasoning mode (Fast / Balanced / Deep)\n"
+            "• `/new` atau `/reset` - Mulai sesi percakapan baru (bersihkan memory context)\n"
             "• `/stop` atau `/abort` - Hentikan paksa seluruh proses aktif\n"
             "• `/update @online` - Git pull & restart daemon pada node aktif\n\n"
             "💡 *Format Tagging:*\n"
@@ -161,21 +194,167 @@ class FleetCoordinator:
             topic_id=message.message_thread_id
         )
 
+    # ---------------- Fleet Reasoning Mode & Settings ----------------
+
+    @staticmethod
+    def _load_settings() -> Dict[str, Any]:
+        try:
+            if SETTINGS_FILE.exists():
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load settings from {SETTINGS_FILE}: {e}")
+        return {}
+
+    @classmethod
+    def _save_settings(cls, data: Dict[str, Any]) -> None:
+        try:
+            SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            current = cls._load_settings()
+            current.update(data)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(current, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save settings to {SETTINGS_FILE}: {e}")
+
+    @classmethod
+    def _get_active_reasoning_mode(cls) -> str:
+        settings = cls._load_settings()
+        mode = settings.get("reasoning_mode", "deep").lower()
+        if mode not in REASONING_MODES:
+            mode = "deep"
+        return mode
+
+    @classmethod
+    def _set_reasoning_mode(cls, mode: str) -> bool:
+        mode = mode.lower()
+        if mode in REASONING_MODES:
+            cls._save_settings({"reasoning_mode": mode})
+            return True
+        return False
+
+    @staticmethod
+    def _build_mode_keyboard(current_mode: str) -> InlineKeyboardMarkup:
+        kb = [
+            [
+                InlineKeyboardButton(
+                    text=f"{'🔘' if current_mode == 'fast' else '⚪'} ⚡ Fast (Low)",
+                    callback_data="fleet_mode:fast"
+                ),
+                InlineKeyboardButton(
+                    text=f"{'🔘' if current_mode == 'balanced' else '⚪'} ⚖️ Balanced (Medium)",
+                    callback_data="fleet_mode:balanced"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"{'🔘' if current_mode == 'deep' else '⚪'} 🧠 Deep Reasoning (High)",
+                    callback_data="fleet_mode:deep"
+                )
+            ]
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=kb)
+
+    @classmethod
+    def _format_mode_text(cls, current_mode: str) -> str:
+        cur_cfg = REASONING_MODES.get(current_mode, REASONING_MODES["deep"])
+        lines = [
+            "⚙️ *PENGATURAN MODE PENALARAN & MODEL*",
+            "Sesuaikan tingkat kedalaman berpikir (_reasoning effort_) dan model AI untuk seluruh node fleet:\n",
+            "• 🧠 *Deep Reasoning (High)*: `gemini-3.8-flash-high` | effort: high | timeout: 600s (10m)",
+            "• ⚖️ *Balanced (Medium)*: `gemini-3.8-flash-medium` | effort: medium | timeout: 300s (5m)",
+            "• ⚡ *Fast (Low)*: `gemini-3.8-flash-low` | effort: low | timeout: 180s (3m)\n",
+            f"Mode aktif saat ini: *{cur_cfg['label']}*",
+            f"_{cur_cfg['desc']}_\n",
+            "💡 _Tip: Anda juga dapat menimpa mode secara instan per pesan dengan menyertakan flag `--fast`, `--deep`, atau `--balanced`._"
+        ]
+        return "\n".join(lines)
+
+    @classmethod
+    def _extract_mode_override(cls, text: str) -> Tuple[Optional[str], str]:
+        """
+        Extracts inline flags like --fast, --deep, --balanced, --low, --high, --medium
+        and returns (override_mode, cleaned_text).
+        """
+        patterns = [
+            (r"(?:^|\s)--(fast|cepat|low)(?:\s|$)", "fast"),
+            (r"(?:^|\s)--(deep|dalam|high)(?:\s|$)", "deep"),
+            (r"(?:^|\s)--(balanced|sedang|medium)(?:\s|$)", "balanced"),
+        ]
+        override = None
+        cleaned = text
+        for pat, mode_val in patterns:
+            if re.search(pat, cleaned, flags=re.IGNORECASE):
+                override = mode_val
+                cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return override, cleaned
+
     async def _cmd_mode(self, message: Message):
         args = message.text.split()[1:] if message.text else []
-        if args and args[0].lower() in ["ringkas", "pantau"]:
-            self.config.mode = args[0].lower()
-            await self.dlp.send_safe_message(
-                self.bot, message.chat.id,
-                f"⚙️ Mode diskusi diubah ke: *{self.config.mode}*",
-                topic_id=message.message_thread_id
-            )
-        else:
-            await self.dlp.send_safe_message(
-                self.bot, message.chat.id,
-                f"ℹ️ Mode saat ini: *{self.config.mode}*. Gunakan `/mode ringkas` atau `/mode pantau`.",
-                topic_id=message.message_thread_id
-            )
+        if args:
+            sub = args[0].lower().replace("--", "")
+            if sub in ["ringkas", "pantau"]:
+                self.config.mode = sub
+                await self.dlp.send_safe_message(
+                    self.bot, message.chat.id,
+                    f"⚙️ Mode diskusi diubah ke: *{self.config.mode}*",
+                    topic_id=message.message_thread_id
+                )
+                return
+
+            alias_map = {
+                "fast": "fast", "low": "fast", "cepat": "fast",
+                "balanced": "balanced", "medium": "balanced", "sedang": "balanced",
+                "deep": "deep", "high": "deep", "dalam": "deep"
+            }
+            if sub in alias_map:
+                chosen = alias_map[sub]
+                self._set_reasoning_mode(chosen)
+                cfg = REASONING_MODES[chosen]
+                await self.dlp.send_safe_message(
+                    self.bot, message.chat.id,
+                    f"✅ Mode penalaran fleet diubah ke: *{cfg['label']}*\n\n"
+                    f"• Model: `{cfg['model']}`\n"
+                    f"• Effort: `{cfg['effort']}`\n"
+                    f"• Timeout: `{cfg['timeout_sec']}s`",
+                    topic_id=message.message_thread_id
+                )
+                return
+
+        # Show interactive inline keyboard
+        cur_mode = self._get_active_reasoning_mode()
+        text = self._format_mode_text(cur_mode)
+        kb = self._build_mode_keyboard(cur_mode)
+        await self.bot.send_message(
+            chat_id=message.chat.id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=kb,
+            message_thread_id=message.message_thread_id
+        )
+
+    async def _handle_mode_selection(self, callback: CallbackQuery):
+        data = callback.data or ""
+        parts = data.split(":")
+        if len(parts) == 2:
+            chosen = parts[1].lower()
+            if chosen in REASONING_MODES:
+                self._set_reasoning_mode(chosen)
+                cfg = REASONING_MODES[chosen]
+                await callback.answer(f"Mode diubah ke: {cfg['label']}")
+                new_text = self._format_mode_text(chosen)
+                new_kb = self._build_mode_keyboard(chosen)
+                try:
+                    await callback.message.edit_text(
+                        text=new_text,
+                        parse_mode="Markdown",
+                        reply_markup=new_kb
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not edit mode message: {e}")
+                return
+        await callback.answer("Pilihan tidak valid.", show_alert=True)
 
     async def _cmd_update(self, message: Message):
         args = message.text.split()[1:] if message.text else []
@@ -395,6 +574,14 @@ class FleetCoordinator:
             return
 
         target_nodes, cleaned_prompt = self._parse_target_nodes(user_prompt)
+        mode_override, cleaned_prompt = self._extract_mode_override(cleaned_prompt)
+
+        active_mode = mode_override or self._get_active_reasoning_mode()
+        mode_cfg = REASONING_MODES.get(active_mode, REASONING_MODES["deep"])
+        active_model = mode_cfg["model"]
+        active_effort = mode_cfg["effort"]
+        active_timeout = int(mode_cfg["timeout_sec"])
+
         await self.presence.update_presence()
 
         # If user only typed tags like "@online", "@all", or node name with no prompt, show Dashboard
@@ -428,12 +615,12 @@ class FleetCoordinator:
                     "prompt": effective_prompt,
                     "command": None,
                     "conversation_id": active_conv_id,
-                    "timeout_sec": 300,
-                    "model": "gemini-3.8-flash-low",
-                    "effort": "low"
+                    "timeout_sec": active_timeout,
+                    "model": active_model,
+                    "effort": active_effort
                 }
                 try:
-                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=310.0)
+                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=float(active_timeout + 15.0))
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
 
                     # Record conversation turn and check if rotation needed
@@ -453,154 +640,154 @@ class FleetCoordinator:
 
             is_chain = self._is_chain_request(cleaned_prompt, target_nodes, raw_text=user_prompt)
 
-            if is_chain:
-                # ----------------- REKOMENDASI 2: SEQUENTIAL CHAIN-OF-THOUGHT -----------------
-                completed_results: Dict[str, Dict[str, Any]] = {}
-                prev_response = ""
-                prev_node = ""
-
-                for idx, nid in enumerate(target_nodes):
-                    step_num = idx + 1
-                    targets_str = f"`{nid}`"
-
-                    # Clean step progress indicator without prematurely dumping huge responses
-                    lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)*\n"]
-                    for prev_nid in target_nodes:
-                        if prev_nid in completed_results:
-                            lines.append(f"✅ *Node `{prev_nid}`:* Analisis selesai.")
-                    lines.append(f"\n⏳ *Node `{nid}`:* _Sedang menganalisis & merumuskan tanggapan (Langkah {step_num}/{len(target_nodes)})..._")
-
-                    full_text = "\n\n".join(lines)
-                    display_text, _, _ = self.dlp.sanitize_text(full_text)
-                    await self._safe_edit_message(prog_msg, display_text)
-
-                    # Prepare prompt with previous node's answer as context
-                    node_prompt = f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
-                    if prev_response:
-                        node_prompt = (
-                            f"[PRESENCE CONTEXT: {presence_context}]\n"
-                            f"[KONTEKS RESPONS SEBELUMNYA DARI `{prev_node}`]:\n{prev_response}\n\n"
-                            f"[INSTRUKSI / PERTANYAAN LANJUTAN UNTUK KAMU `{nid}`]:\n{cleaned_prompt}"
-                        )
-
-                    _, res = await query_node(nid, prompt_override=node_prompt)
-                    completed_results[nid] = res
-                    prev_node = nid
-                    agy_resp = res.get("agy", {}).get("response", "") or res.get("stdout", "")
-                    prev_response = agy_resp[:3000]
-
-                facts_collected = completed_results
-
-                # Render final chain result
-                header = f"🔗 *HASIL DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* ({len(target_nodes)} Langkah Selesai)"
-                display_text, exceeds, full_redacted = self._build_multi_node_preview(
-                    header=header,
-                    target_nodes=target_nodes,
-                    results=completed_results
-                )
-                await self._safe_edit_message(prog_msg, display_text)
-                if exceeds:
+            async def _keepalive_typing():
+                while True:
                     try:
-                        doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
-                        await self.bot.send_document(
-                            chat_id=message.chat.id,
-                            document=doc,
-                            caption="📄 *Dokumen Lengkap Diskusi Berantai (.md)*",
-                            parse_mode="Markdown",
-                            message_thread_id=message.message_thread_id,
-                            reply_to_message_id=prog_msg.message_id
-                        )
-                    except Exception as doc_err:
-                        logger.error(f"Failed to send chain markdown document: {doc_err}")
+                        await asyncio.sleep(5.0)
+                        await self.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        pass
+
+            typing_task = asyncio.create_task(_keepalive_typing())
+            try:
+                if is_chain:
+                    # ----------------- REKOMENDASI 2: SEQUENTIAL CHAIN-OF-THOUGHT -----------------
+                    completed_results: Dict[str, Dict[str, Any]] = {}
+                    prev_response = ""
+                    prev_node = ""
+
+                    for idx, nid in enumerate(target_nodes):
+                        step_num = idx + 1
+                        targets_str = f"`{nid}`"
+
+                        # Clean step progress indicator without prematurely dumping huge responses
+                        lines = [f"🔗 *DISKUSI BERANTAI (CHAIN-OF-THOUGHT)*\n"]
+                        for prev_nid in target_nodes:
+                            if prev_nid in completed_results:
+                                lines.append(f"✅ *Node `{prev_nid}`:* Analisis selesai.")
+                        lines.append(f"\n⏳ *Node `{nid}`:* _Sedang menganalisis & merumuskan tanggapan (Langkah {step_num}/{len(target_nodes)})..._")
+
+                        full_text = "\n\n".join(lines)
+                        display_text, _, _ = self.dlp.sanitize_text(full_text)
+                        await self._safe_edit_message(prog_msg, display_text)
+
+                        # Prepare prompt with previous node's answer as context
+                        node_prompt = f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
+                        if prev_response:
+                            node_prompt = (
+                                f"[PRESENCE CONTEXT: {presence_context}]\n"
+                                f"[KONTEKS RESPONS SEBELUMNYA DARI `{prev_node}`]:\n{prev_response}\n\n"
+                                f"[INSTRUKSI / PERTANYAAN LANJUTAN UNTUK KAMU `{nid}`]:\n{cleaned_prompt}"
+                            )
+
+                        _, res = await query_node(nid, prompt_override=node_prompt)
+                        completed_results[nid] = res
+                        prev_node = nid
+                        agy_resp = res.get("agy", {}).get("response", "") or res.get("stdout", "")
+                        prev_response = agy_resp[:3000]
+
+                    facts_collected = completed_results
+
+                    # Render final chain result
+                    header = f"🔗 *HASIL DISKUSI BERANTAI (CHAIN-OF-THOUGHT)* ({len(target_nodes)} Langkah Selesai)"
+                    display_text, exceeds, full_redacted = self._build_multi_node_preview(
+                        header=header,
+                        target_nodes=target_nodes,
+                        results=completed_results
+                    )
+                    await self._safe_edit_message(prog_msg, display_text)
+                    if exceeds:
                         try:
                             doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
                             await self.bot.send_document(
                                 chat_id=message.chat.id,
                                 document=doc,
-                                caption="📄 Dokumen Lengkap Diskusi Berantai (.md)",
-                                message_thread_id=message.message_thread_id
+                                caption="📄 *Dokumen Lengkap Diskusi Berantai (.md)*",
+                                parse_mode="Markdown",
+                                message_thread_id=message.message_thread_id,
+                                reply_to_message_id=prog_msg.message_id
                             )
-                        except Exception as doc_err2:
-                            logger.error(f"Retry sending chain doc failed: {doc_err2}")
-
-            else:
-                # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
-                completed_results: Dict[str, Dict[str, Any]] = {}
-                pending_nodes = list(target_nodes)
-
-                async def _render_progressive_status(is_final: bool = False):
-                    async with edit_lock:
-                        header = "🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*"
-                        if is_final:
-                            display_text, exceeds, full_redacted = self._build_multi_node_preview(
-                                header=header,
-                                target_nodes=target_nodes,
-                                results=completed_results
-                            )
-                        else:
-                            lines = [header + "\n"]
-                            for nid in target_nodes:
-                                if nid in completed_results:
-                                    lines.append(f"✅ *Node `{nid}`:* Analisis selesai.")
-                            if pending_nodes:
-                                waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
-                                lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
-                            full_text = "\n\n".join(lines)
-                            display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
-
-                        await self._safe_edit_message(prog_msg, display_text)
-                        if is_final and exceeds:
+                        except Exception as doc_err:
+                            logger.error(f"Failed to send chain markdown document: {doc_err}")
                             try:
-                                doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
+                                doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"diskusi_berantai_{int(time.time())}.md")
                                 await self.bot.send_document(
                                     chat_id=message.chat.id,
                                     document=doc,
-                                    caption="📄 *Dokumen Lengkap Hasil Konsultasi (.md)*",
-                                    parse_mode="Markdown",
-                                    message_thread_id=message.message_thread_id,
-                                    reply_to_message_id=prog_msg.message_id
+                                    caption="📄 Dokumen Lengkap Diskusi Berantai (.md)",
+                                    message_thread_id=message.message_thread_id
                                 )
-                            except Exception as doc_err:
-                                logger.error(f"Failed to send markdown document: {doc_err}")
+                            except Exception as doc_err2:
+                                logger.error(f"Retry sending chain doc failed: {doc_err2}")
+
+                else:
+                    # ----------------- REKOMENDASI 1: PROGRESSIVE REALTIME UPDATE -----------------
+                    completed_results: Dict[str, Dict[str, Any]] = {}
+                    pending_nodes = list(target_nodes)
+
+                    async def _render_progressive_status(is_final: bool = False):
+                        async with edit_lock:
+                            header = "🔍 *HASIL KONSULTASI (CONSULT READ-ONLY)*"
+                            if is_final:
+                                display_text, exceeds, full_redacted = self._build_multi_node_preview(
+                                    header=header,
+                                    target_nodes=target_nodes,
+                                    results=completed_results
+                                )
+                            else:
+                                lines = [header + "\n"]
+                                for nid in target_nodes:
+                                    if nid in completed_results:
+                                        lines.append(f"✅ *Node `{nid}`:* Analisis selesai.")
+                                if pending_nodes:
+                                    waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
+                                    lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
+                                full_text = "\n\n".join(lines)
+                                display_text, exceeds, full_redacted = self.dlp.sanitize_text(full_text)
+
+                            await self._safe_edit_message(prog_msg, display_text)
+                            if is_final and exceeds:
                                 try:
                                     doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
                                     await self.bot.send_document(
                                         chat_id=message.chat.id,
                                         document=doc,
-                                        caption="📄 Dokumen Lengkap Hasil Konsultasi (.md)",
-                                        message_thread_id=message.message_thread_id
+                                        caption="📄 *Dokumen Lengkap Hasil Konsultasi (.md)*",
+                                        parse_mode="Markdown",
+                                        message_thread_id=message.message_thread_id,
+                                        reply_to_message_id=prog_msg.message_id
                                     )
-                                except Exception as doc_err2:
-                                    logger.error(f"Retry sending consult doc failed: {doc_err2}")
+                                except Exception as doc_err:
+                                    logger.error(f"Failed to send markdown document: {doc_err}")
+                                    try:
+                                        doc = BufferedInputFile(full_redacted.encode("utf-8"), filename=f"hasil_konsultasi_{int(time.time())}.md")
+                                        await self.bot.send_document(
+                                            chat_id=message.chat.id,
+                                            document=doc,
+                                            caption="📄 Dokumen Lengkap Hasil Konsultasi (.md)",
+                                            message_thread_id=message.message_thread_id
+                                        )
+                                    except Exception as doc_err2:
+                                        logger.error(f"Retry sending consult doc failed: {doc_err2}")
 
-                async def run_single_node(nid: str):
-                    res = await query_node(nid)
-                    completed_results[nid] = res[1]
-                    if nid in pending_nodes:
-                        pending_nodes.remove(nid)
-                    await _render_progressive_status(is_final=False)
-                    return res
+                    async def run_single_node(nid: str):
+                        res = await query_node(nid)
+                        completed_results[nid] = res[1]
+                        if nid in pending_nodes:
+                            pending_nodes.remove(nid)
+                        await _render_progressive_status(is_final=False)
+                        return res
 
-                async def _keepalive_typing():
-                    while pending_nodes:
-                        try:
-                            await asyncio.sleep(5.0)
-                            await self.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-                        except asyncio.CancelledError:
-                            break
-                        except Exception:
-                            pass
-
-                typing_task = asyncio.create_task(_keepalive_typing())
-                try:
                     node_results = await asyncio.gather(*[run_single_node(nid) for nid in target_nodes])
-                finally:
-                    typing_task.cancel()
+                    facts_collected = dict(node_results)
 
-                facts_collected = dict(node_results)
+                    # Final render without pending footer
+                    await _render_progressive_status(is_final=True)
 
-                # Final render without pending footer
-                await _render_progressive_status(is_final=True)
+            finally:
+                typing_task.cancel()
 
             # 2. Check if the prompt / gathered facts indicate need for system modification
             needs_action, proposal = self._detect_modification_intent(cleaned_prompt, facts_collected)
