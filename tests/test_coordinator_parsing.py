@@ -77,18 +77,32 @@ def test_build_multi_node_preview(coordinator):
 
     header = "🔗 *HASIL DISKUSI BERANTAI*"
     nodes = ["pc-diba", "vps"]
-    results = {
-        "pc-diba": {"agy": {"response": "A" * 3000}},
-        "vps": {"agy": {"response": "B" * 3000}},
-    }
 
-    preview, exceeds, full = coordinator._build_multi_node_preview(header, nodes, results, max_len=3500)
+    # Case 1: Exceeds 3000 chars -> Clean redirect notice, no messy text in chat, full in md
+    results = {
+        "pc-diba": {"agy": {"response": "A" * 2000}},
+        "vps": {"agy": {"response": "B" * 2000}},
+    }
+    preview, exceeds, full = coordinator._build_multi_node_preview(header, nodes, results, max_len=3000)
     assert exceeds is True
-    assert "Node `pc-diba`" in preview
-    assert "Node `vps`" in preview
-    assert len(preview) <= 3500
-    assert "A" * 3000 in full
-    assert "B" * 3000 in full
+    assert "dokumen `.md` terlampir" in preview
+    assert "Analisis Selesai" in preview
+    # Full response text must NOT be dumped into preview
+    assert "A" * 2000 not in preview
+    # But must exist in full document
+    assert "A" * 2000 in full
+    assert "B" * 2000 in full
+
+    # Case 2: Under 3000 chars -> Direct text sent, NO file attachment
+    short_results = {
+        "pc-diba": {"agy": {"response": "Hasil analisis singkat PC Diba."}},
+        "vps": {"agy": {"response": "Hasil analisis singkat VPS."}},
+    }
+    preview_short, exceeds_short, full_short = coordinator._build_multi_node_preview(header, nodes, short_results, max_len=3000)
+    assert exceeds_short is False
+    assert preview_short == full_short
+    assert "Hasil analisis singkat PC Diba." in preview_short
+    assert "dokumen `.md` terlampir" not in preview_short
 
 
 def test_extract_mode_override():

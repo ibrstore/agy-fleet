@@ -961,13 +961,14 @@ class FleetCoordinator:
         header: str,
         target_nodes: List[str],
         results: Dict[str, Dict[str, Any]],
-        max_len: int = 3500,
-        target_preview_len: int = 2800,
+        max_len: int = 3000,
         mode_label: Optional[str] = None
     ) -> Tuple[str, bool, str]:
         """
-        Builds a balanced Telegram preview ensuring every node has visibility in chat
-        strictly under 3000 characters, while generating the complete, unclipped markdown for file attachment.
+        Builds the message content based on length:
+        - If total content <= 3000 chars: returns (full_redacted, False, full_redacted) -> text sent in chat, NO file sent.
+        - If total content > 3000 chars: returns (notice_text, True, full_redacted) -> chat only shows clean redirect notice,
+          full unclipped content sent as .md attachment without cluttering chat with broken text.
         """
         # Full text without any clipping
         full_lines = [header + "\n"]
@@ -977,35 +978,22 @@ class FleetCoordinator:
         full_unclipped = "\n\n".join(full_lines)
         full_redacted = self.dlp.redactor.redact(full_unclipped)
 
+        # Condition 1: Under 3000 characters -> Send text directly, NO file attachment
         if len(full_redacted) <= max_len:
             return full_redacted, False, full_redacted
 
-        # Balanced preview per node strictly under target_preview_len (<3000 chars)
-        num_nodes = len([n for n in target_nodes if n in results]) or 1
-        per_node_limit = max(350, (target_preview_len - 500) // num_nodes)
-
-        preview_lines = [header + "\n"]
-        for nid in target_nodes:
-            if nid in results:
-                formatted = self._format_node_result(nid, results[nid], mode_label=mode_label)
-                if len(formatted) > per_node_limit:
-                    cut = formatted[:per_node_limit].rfind("\n")
-                    if cut < per_node_limit // 2:
-                        cut = per_node_limit
-                    snippet = formatted[:cut].rstrip()
-                    if snippet.count("```") % 2 != 0:
-                        snippet += "\n```"
-                    preview_lines.append(f"{snippet}\n\n_...(inti tanggapan, penjelasan lengkap ada di file .md)_")
-                else:
-                    preview_lines.append(formatted)
-
-        preview_lines.append(
-            "\n📄 _Hasil pembahasan lengkap melebihi 3.500 karakter. "
-            "Teks di atas merupakan rangkuman inti di bawah 3.000 karakter. "
-            "Silakan buka file dokumen (.md) terlampir untuk penjelasan dan konfigurasi lengkapnya._"
-        )
-        preview_text = self.dlp.redactor.redact("\n\n".join(preview_lines))
-        return preview_text, True, full_redacted
+        # Condition 2: Over 3000 characters -> Direct user to file, NO messy text in chat
+        nodes_str = ", ".join([f"`{n}`" for n in target_nodes if n in results])
+        char_count = f"{len(full_redacted):,}"
+        mode_str = f" | Mode: {mode_label}" if mode_label else ""
+        notice_lines = [
+            f"{header}\n",
+            f"✅ *Analisis Selesai* ({nodes_str}){mode_str}\n",
+            f"📄 *Hasil pembahasan lengkap ({char_count} karakter)* telah dikemas ke dalam dokumen `.md` terlampir di bawah karena melebihi batas tampilan chat.\n",
+            "👉 _Silakan unduh dan buka file `.md` terlampir untuk membaca detail penjelasan, fakta, data sistem, dan konfigurasi lengkapnya._"
+        ]
+        notice_text = self.dlp.redactor.redact("\n".join(notice_lines))
+        return notice_text, True, full_redacted
 
     def _is_chain_request(self, prompt: str, target_nodes: List[str], raw_text: str = "") -> bool:
         """Determines if query requests a sequential chain between multiple nodes."""
