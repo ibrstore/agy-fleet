@@ -22,6 +22,7 @@ import psutil
 from shared.config import (
     PRESENCE_KV_BUCKET,
     HEARTBEAT_INTERVAL_SEC,
+    HEARTBEAT_TTL_SEC,
     SUBJECT_NODE_CONSULT,
     SUBJECT_NODE_MANIFEST,
     SUBJECT_BROADCAST,
@@ -79,6 +80,23 @@ class FleetDaemon:
         logger.info(f"Starting agy-fleet daemon for node '{self.config.node_id}'...")
         self.is_running = True
 
+        # Windows keep-alive: prevent sleep/standby while daemon is running
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # ES_CONTINUOUS (0x80000000) | ES_SYSTEM_REQUIRED (0x00000001) | ES_AWAYMODE_REQUIRED (0x00000040)
+                ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001 | 0x00000040)
+                logger.info("Windows keep-alive active: system sleep prevented via SetThreadExecutionState.")
+            except Exception as e:
+                logger.warning(f"Could not configure Windows SetThreadExecutionState: {e}")
+
+            try:
+                import subprocess
+                subprocess.run(["powercfg", "/change", "standby-timeout-ac", "0"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["powercfg", "/change", "hibernate-timeout-ac", "0"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
         # Connect to NATS
         connect_opts = {
             "servers": [self.config.nats_url],
@@ -97,11 +115,11 @@ class FleetDaemon:
         try:
             self.kv = await js.key_value(bucket=PRESENCE_KV_BUCKET)
         except Exception:
-            # Create KV bucket if not exists (with 15s TTL)
+            # Create KV bucket if not exists (with HEARTBEAT_TTL_SEC TTL)
             try:
                 self.kv = await js.create_key_value(
                     bucket=PRESENCE_KV_BUCKET,
-                    ttl=15,  # 15s TTL for auto-expire on sleep/crash
+                    ttl=int(HEARTBEAT_TTL_SEC),
                     history=1
                 )
             except Exception as e:
@@ -122,9 +140,27 @@ class FleetDaemon:
 
     async def _heartbeat_loop(self) -> None:
         """Publishes heartbeat every 5 seconds to presence KV store."""
-        agy_ver = await self.agy.get_version()
+        try:
+            agy_ver = await asyncio.wait_for(self.agy.get_version(), timeout=3.0)
+        except Exception:
+            agy_ver = "antigravity-cli (ready)" if self.agy.is_available() else "not_installed"
+
         while self.is_running and self.nc and not self.nc.is_closed:
             try:
+                if sys.platform == "win32":
+                    try:
+                        import ctypes
+                        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+                    except Exception:
+                        pass
+
+                if not self.kv and self.nc and not self.nc.is_closed:
+                    try:
+                        js = self.nc.jetstream()
+                        self.kv = await js.key_value(bucket=PRESENCE_KV_BUCKET)
+                    except Exception:
+                        pass
+
                 cpu = psutil.cpu_percent()
                 mem = psutil.virtual_memory().percent
                 ip = self._get_local_ip()
@@ -292,10 +328,13 @@ class FleetDaemon:
                 # Respawn self with updated code
                 if sys.platform == "win32":
                     import subprocess
-                    subprocess.Popen([sys.executable] + sys.argv, creationflags=0x08000000)
-                    sys.exit(0)
+                    subprocess.Popen([sys.executable, "-m", "daemon.agent"], creationflags=0x08000000)
+                    os._exit(0)
                 else:
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                    if os.getenv("INVOCATION_ID") or os.getenv("JOURNAL_STREAM"):
+                        os._exit(0)
+                    else:
+                        os.execv(sys.executable, [sys.executable, "-m", "daemon.agent"])
 
         except Exception as e:
             logger.error(f"Error handling broadcast: {e}")

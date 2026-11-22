@@ -6,7 +6,7 @@ from typing import List
 
 # Heartbeat & Presence
 HEARTBEAT_INTERVAL_SEC: float = 5.0
-HEARTBEAT_TTL_SEC: float = 15.0
+HEARTBEAT_TTL_SEC: float = 60.0
 PRESENCE_KV_BUCKET: str = "fleet_presence"
 
 # Multi-Agent Turn Limits

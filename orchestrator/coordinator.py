@@ -708,9 +708,6 @@ class FleetCoordinator:
             edit_lock = asyncio.Lock()
 
             async def query_node(node_id: str, prompt_override: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
-                if not self.presence.is_node_online(node_id):
-                    return node_id, {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
-
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
                 active_conv_id = self.conv_mgr.get_conversation_id(node_id)
                 effective_prompt = prompt_override or (
@@ -727,6 +724,17 @@ class FleetCoordinator:
                     "model": active_model,
                     "effort": active_effort
                 }
+
+                # Resilient presence check: if marked offline in KV store, ping via NATS first before failing
+                if not self.presence.is_node_online(node_id):
+                    try:
+                        ping_req = {"command": "echo pong"}
+                        await self.nc.request(consult_subj, json.dumps(ping_req).encode("utf-8"), timeout=5.0)
+                        logger.info(f"Node '{node_id}' responded to live ping despite KV expiry; proceeding.")
+                        if node_id in self.presence.nodes_state:
+                            self.presence.nodes_state[node_id].status = NodeStatus.ONLINE
+                    except Exception:
+                        return node_id, {"status": "OFFLINE", "error": f"Node {node_id} sedang mati/sleep."}
                 try:
                     resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=float(active_timeout + 15.0))
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
