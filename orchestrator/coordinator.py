@@ -428,12 +428,12 @@ class FleetCoordinator:
                     "prompt": effective_prompt,
                     "command": None,
                     "conversation_id": active_conv_id,
-                    "timeout_sec": 240,
-                    "model": "gemini-3.8-flash-high",
-                    "effort": "high"
+                    "timeout_sec": 300,
+                    "model": "gemini-3.8-flash-low",
+                    "effort": "low"
                 }
                 try:
-                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=250.0)
+                    resp_msg = await self.nc.request(consult_subj, json.dumps(req_data).encode("utf-8"), timeout=310.0)
                     resp_data = json.loads(resp_msg.data.decode("utf-8"))
 
                     # Record conversation turn and check if rotation needed

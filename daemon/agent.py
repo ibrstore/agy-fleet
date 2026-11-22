@@ -199,9 +199,9 @@ class FleetDaemon:
                 agy_res = await self.agy.run_prompt(
                     prompt=prompt,
                     conversation_id=data.get("conversation_id"),
-                    timeout_sec=data.get("timeout_sec", 240),
-                    model=data.get("model", "gemini-3.8-flash-high"),
-                    effort=data.get("effort", "high")
+                    timeout_sec=data.get("timeout_sec", 300),
+                    model=data.get("model", "gemini-3.8-flash-low"),
+                    effort=data.get("effort", "low")
                 )
                 response_data["agy"] = agy_res
 
