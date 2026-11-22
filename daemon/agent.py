@@ -317,13 +317,8 @@ class FleetDaemon:
                 stdout, stderr = await proc.communicate()
                 logger.info(f"Git pull output: {stdout.decode()}")
 
-                # Cleanly release resources before respawning
+                # Cleanly release PID lock before respawning
                 _release_pid_lock(self.config.node_id)
-                if self.nc and not self.nc.is_closed:
-                    try:
-                        await self.nc.close()
-                    except Exception:
-                        pass
 
                 # Respawn self with updated code
                 if sys.platform == "win32":
@@ -332,8 +327,10 @@ class FleetDaemon:
                     os._exit(0)
                 else:
                     if os.getenv("INVOCATION_ID") or os.getenv("JOURNAL_STREAM"):
+                        logger.info("Exiting cleanly to allow systemd to restart daemon...")
                         os._exit(0)
                     else:
+                        logger.info("Respawning daemon via execv...")
                         os.execv(sys.executable, [sys.executable, "-m", "daemon.agent"])
 
         except Exception as e:
