@@ -127,20 +127,25 @@ def test_extract_mode_override():
 
 
 def test_classify_prompt_complexity():
-    # Light prompts -> fast
+    # Light / Summary / Status -> fast (low effort, snappy responses)
     assert FleetCoordinator._classify_prompt_complexity("cek ram") == "fast"
     assert FleetCoordinator._classify_prompt_complexity("status disk") == "fast"
     assert FleetCoordinator._classify_prompt_complexity("halo selamat pagi") == "fast"
     assert FleetCoordinator._classify_prompt_complexity("port berapa yg kebuka") == "fast"
+    assert FleetCoordinator._classify_prompt_complexity("rangkum arsitektur cctv kemarin") == "fast"
+    assert FleetCoordinator._classify_prompt_complexity("ringkas hasil diskusi") == "fast"
 
-    # Deep prompts -> deep
-    assert FleetCoordinator._classify_prompt_complexity("analisa arsitektur cctv shinobi") == "deep"
-    assert FleetCoordinator._classify_prompt_complexity("bagaimana cara rancang cluster docker tailscale") == "deep"
-    assert FleetCoordinator._classify_prompt_complexity("troubleshoot error webrtc streaming") == "deep"
-    assert FleetCoordinator._classify_prompt_complexity("halo", is_chain=True) == "deep"
+    # Discussion / Comparative analysis / Chain -> balanced (medium effort)
+    assert FleetCoordinator._classify_prompt_complexity("analisa arsitektur cctv shinobi") == "balanced"
+    assert FleetCoordinator._classify_prompt_complexity("bagaimana cara rancang cluster docker tailscale") == "balanced"
+    assert FleetCoordinator._classify_prompt_complexity("troubleshoot error webrtc streaming") == "balanced"
+    assert FleetCoordinator._classify_prompt_complexity("diskusikan perbandingan port", is_chain=True) == "balanced"
 
-    # Moderate prompts -> balanced
-    assert FleetCoordinator._classify_prompt_complexity("apa perbedaan konfigurasi linux dan windows") == "balanced"
+    # Pengerjaan / Eksekusi / Setup / Sistem -> deep (high effort, 600s)
+    assert FleetCoordinator._classify_prompt_complexity("eksekusi setup cctv shinobi") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("pasang docker compose dan jalankan container") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("kerjakan migrasi database dan tulis skrip") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("/deploy shinobi cctv") == "deep"
 
 
 def test_resolve_effective_mode():
@@ -149,15 +154,26 @@ def test_resolve_effective_mode():
     assert name == "deep"
     assert cfg["model"] == "gemini-3.8-flash-high"
 
-    # Auto mode resolves light to fast
+    # Auto mode resolves light / summary to fast
     name, cfg = FleetCoordinator._resolve_effective_mode("auto", "cek ram")
     assert name == "fast"
     assert cfg["model"] == "gemini-3.8-flash-low"
     assert cfg["effort"] == "low"
     assert cfg["timeout_sec"] == 180
 
-    # Auto mode resolves heavy to deep
-    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "rancang arsitektur video stream cctv")
+    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "rangkum arsitektur sistem")
+    assert name == "fast"
+    assert cfg["model"] == "gemini-3.8-flash-low"
+
+    # Auto mode resolves analytical discussion to balanced
+    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "analisa topologi jaringan")
+    assert name == "balanced"
+    assert cfg["model"] == "gemini-3.8-flash-medium"
+    assert cfg["effort"] == "medium"
+    assert cfg["timeout_sec"] == 300
+
+    # Auto mode resolves pengerjaan / eksekusi to deep
+    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "eksekusi setup shinobi cctv")
     assert name == "deep"
     assert cfg["model"] == "gemini-3.8-flash-high"
     assert cfg["effort"] == "high"
@@ -205,5 +221,5 @@ def test_mode_keyboard_and_text():
     assert "fleet_mode:deep" == kb_deep.inline_keyboard[2][0].callback_data
 
     txt = FleetCoordinator._format_mode_text("auto")
-    assert "Auto (Smart Detection)" in txt
+    assert "Auto (Smart" in txt
     assert "Deep Reasoning (High)" in txt

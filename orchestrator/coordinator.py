@@ -62,11 +62,11 @@ FACTS_AND_DATA_INSTRUCTION = (
 REASONING_MODES: Dict[str, Dict[str, Any]] = {
     "auto": {
         "name": "auto",
-        "label": "🤖 Auto (Smart Detection)",
+        "label": "🤖 Auto (Smart: Diskusi=Fast, Pengerjaan=High)",
         "model": "auto",
         "effort": "auto",
         "timeout_sec": 600,
-        "desc": "Deteksi cerdas otomatis: pertanyaan ringan (Low/180s), sedang (Medium/300s), arsitektur/analisis berat (High/600s).",
+        "desc": "Deteksi cerdas otomatis: diskusi/rangkum/tanya jawab -> Fast (Low), pengerjaan/eksekusi/setup sistem -> Deep (High).",
     },
     "deep": {
         "name": "deep",
@@ -252,42 +252,57 @@ class FleetCoordinator:
     @classmethod
     def _classify_prompt_complexity(cls, prompt: str, is_chain: bool = False) -> str:
         """
-        Classifies prompt into 'fast', 'balanced', or 'deep' based on intent, complexity, and length.
+        Classifies prompt into 'fast', 'balanced', or 'deep' based on operational intent:
+        - Diskusi / Rangkuman / Status / Tanya Jawab -> 'fast' (Low effort, 180s)
+        - Diskusi Multi-Node / Analisis Komparatif -> 'balanced' (Medium effort, 300s)
+        - Pengerjaan / Eksekusi / Setup / Migrasi Sistem -> 'deep' (High effort, 600s)
         """
-        # Sequential multi-node chains require deep synthesis
-        if is_chain:
-            return "deep"
-
         p = prompt.strip().lower()
         words = p.split()
         word_count = len(words)
         char_count = len(p)
 
-        # Keywords triggering Deep Reasoning (High effort / 600s)
-        deep_keywords = [
-            "arsitektur", "rancang", "desain", "perancangan", "topologi", "skema",
-            "analisis", "analisa", "evaluasi", "investigasi", "mengapa", "kenapa",
-            "bagaimana cara", "solusi", "rekomendasi", "optimasi", "optimisasi",
-            "cctv", "shinobi", "webrtc", "rtsp", "v380", "cluster", "tailscale",
-            "reverse proxy", "coolify", "storage", "rclone", "benchmark",
-            "troubleshoot", "debug", "vulnerability", "keamanan", "bottleneck",
-            "eksekusi", "implementasi", "komprehensif", "menyeluruh", "bandingkan"
+        # 1. Pengerjaan / Eksekusi / Mutasi Sistem (Deep Reasoning / High / 600s)
+        work_keywords = [
+            "eksekusi", "kerjakan", "jalankan", "setup", "pasang", "install",
+            "deploy", "konfigurasi", "migrasi", "buatkan", "bikin", "implementasi",
+            "terapkan", "tulis kode", "tulis skrip", "tulis script", "perbaiki", "fix",
+            "update sistem", "restart service", "manifest", "/deploy", "/exec", "/manifest"
         ]
-        if any(k in p for k in deep_keywords) or word_count >= 25 or char_count >= 160:
+        if any(k in p for k in work_keywords):
             return "deep"
 
-        # Keywords triggering Fast (Low effort / 180s)
-        light_keywords = [
+        # 2. Multi-node sequential chain discussion (Balanced / Medium / 300s)
+        if is_chain:
+            return "balanced"
+
+        # 3. Diskusi / Rangkuman / Ringkas / Status Cek (Fast / Low / 180s)
+        summary_and_light_keywords = [
+            # Rangkuman & Ringkasan
+            "rangkum", "ringkas", "kesimpulan", "rekap", "poin penting", "inti sari",
+            # Status & Metrik Cepat
             "cek", "status", "spek", "spesifikasi", "ram", "disk", "memori", "cpu",
             "ip", "online", "uptime", "versi", "version", "port", "load", "ping",
-            "tes", "test", "halo", "hai", "pagi", "siang", "sore", "malam",
+            # Sapaan & Obrolan Ringan
+            "halo", "hai", "pagi", "siang", "sore", "malam", "tes", "test",
             "siapa kamu", "bisa apa", "help", "bantuan", "info"
         ]
-        if (word_count <= 12 and char_count <= 80) and any(k in p for k in light_keywords):
-            return "fast"
+        if any(k in p for k in summary_and_light_keywords):
+            if word_count <= 25 or any(k in p for k in ["rangkum", "ringkas", "kesimpulan", "cek", "status"]):
+                return "fast"
 
-        # Default fallback for moderate complexity queries
-        return "balanced"
+        # 4. In-depth analytical discussions without execution (Balanced / Medium / 300s)
+        deep_discussion_keywords = [
+            "arsitektur", "rancang", "desain", "topologi", "skema",
+            "analisis", "analisa", "evaluasi", "investigasi", "mengapa", "kenapa",
+            "bagaimana cara", "solusi", "rekomendasi", "optimasi", "optimisasi",
+            "bandingkan", "perbandingan", "troubleshoot", "debug"
+        ]
+        if any(k in p for k in deep_discussion_keywords) or word_count >= 25 or char_count >= 160:
+            return "balanced"
+
+        # Default fallback: fast for general chat
+        return "fast"
 
     @classmethod
     def _resolve_effective_mode(cls, active_mode: str, prompt: str, is_chain: bool = False) -> Tuple[str, Dict[str, Any]]:
@@ -307,7 +322,7 @@ class FleetCoordinator:
         kb = [
             [
                 InlineKeyboardButton(
-                    text=f"{'🔘' if current_mode == 'auto' else '⚪'} 🤖 Auto (Smart Detection)",
+                    text=f"{'🔘' if current_mode == 'auto' else '⚪'} 🤖 Auto (Smart: Diskusi=Fast, Pengerjaan=High)",
                     callback_data="fleet_mode:auto"
                 )
             ],
@@ -336,7 +351,7 @@ class FleetCoordinator:
         lines = [
             "⚙️ *PENGATURAN MODE PENALARAN & MODEL*",
             "Sesuaikan tingkat kedalaman berpikir (_reasoning effort_) dan model AI untuk seluruh node fleet:\n",
-            "• 🤖 *Auto (Smart Detection)*: Deteksi cerdas (ringan -> Low, sedang -> Medium, berat/arsitektur -> High)",
+            "• 🤖 *Auto (Smart)*: Diskusi / rangkuman / status -> Fast (Low), pengerjaan / eksekusi -> Deep (High)",
             "• 🧠 *Deep Reasoning (High)*: `gemini-3.8-flash-high` | effort: high | timeout: 600s (10m)",
             "• ⚖️ *Balanced (Medium)*: `gemini-3.8-flash-medium` | effort: medium | timeout: 300s (5m)",
             "• ⚡ *Fast (Low)*: `gemini-3.8-flash-low` | effort: low | timeout: 180s (3m)\n",
