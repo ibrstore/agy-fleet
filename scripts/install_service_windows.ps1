@@ -18,10 +18,34 @@ if (-not (Test-Path $PythonExe)) {
     exit 1
 }
 
-# Gunakan pythonw.exe jika ada (menjalankan tanpa jendela konsol sama sekali)
-$TargetPython = if (Test-Path $PythonWExe) { $PythonWExe } else { $PythonExe }
+# 1. Simpan konfigurasi node_id ke ~/.agy-fleet/daemon.json
+$ConfigDir = Join-Path $env:USERPROFILE ".agy-fleet"
+if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null }
+$ConfigFile = Join-Path $ConfigDir "daemon.json"
 
-# 1. Pastikan script watchdog hidden tersedia
+$DevType = if ($NodeId -like "*lap*" -or $NodeId -like "*laptop*") { "laptop" } else { "pc" }
+$ConfigData = [ordered]@{
+    node_id = $NodeId
+    device_name = $env:COMPUTERNAME
+    device_type = $DevType
+    os_name = "windows"
+    nats_url = "nats://100.66.49.13:4222"
+    heartbeat_interval = 5.0
+    agy_binary_path = "agy"
+}
+if (Test-Path $ConfigFile) {
+    try {
+        $Existing = Get-Content $ConfigFile -Raw | ConvertFrom-Json
+        if ($Existing.node_id -and ($NodeId -eq $env:COMPUTERNAME.ToLower())) {
+            $ConfigData.node_id = $Existing.node_id
+        }
+        if ($Existing.nats_url) { $ConfigData.nats_url = $Existing.nats_url }
+    } catch {}
+}
+$ConfigData | ConvertTo-Json -Depth 5 | Set-Content $ConfigFile -Encoding utf8
+Write-Host "✅ Konfigurasi disimpan ke $ConfigFile (Node ID: $($ConfigData.node_id), NATS: $($ConfigData.nats_url))"
+
+# 2. Pastikan script watchdog hidden tersedia
 $VbsPath = Join-Path $RepoDir "scripts\run_watchdog_hidden.vbs"
 
 # 2. Daftarkan ke Task Scheduler dengan Watchdog Self-Healing (Hidden Background)
