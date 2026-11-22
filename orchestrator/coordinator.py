@@ -51,7 +51,23 @@ logger = logging.getLogger("fleet-orchestrator")
 SETTINGS_DIR = Path.home() / ".agy-fleet"
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
+FACTS_AND_DATA_INSTRUCTION = (
+    "[ATURAN MUTLAK JAWABAN - FAKTA & DATA RIIL]:\n"
+    "1. Jawab HANYA berdasarkan fakta, metrik, konfigurasi, dan kondisi riil di node Anda saat ini.\n"
+    "2. DILARANG berspekulasi atau berasumsi jika belum memeriksa kondisi sistem riil.\n"
+    "3. Selalu sertakan data konkret (seperti angka metrik CPU/RAM, kapasitas disk, status port, IP address, status service/docker, atau file konfigurasi riil) dalam penjelasan Anda.\n"
+    "4. Gunakan tools sistem Anda (baca file, jalankan perintah diagnostik read-only) untuk mengumpulkan fakta objektif sebelum merumuskan jawaban."
+)
+
 REASONING_MODES: Dict[str, Dict[str, Any]] = {
+    "auto": {
+        "name": "auto",
+        "label": "🤖 Auto (Smart Detection)",
+        "model": "auto",
+        "effort": "auto",
+        "timeout_sec": 600,
+        "desc": "Deteksi cerdas otomatis: pertanyaan ringan (Low/180s), sedang (Medium/300s), arsitektur/analisis berat (High/600s).",
+    },
     "deep": {
         "name": "deep",
         "label": "🧠 Deep Reasoning (High)",
@@ -220,9 +236,9 @@ class FleetCoordinator:
     @classmethod
     def _get_active_reasoning_mode(cls) -> str:
         settings = cls._load_settings()
-        mode = settings.get("reasoning_mode", "deep").lower()
+        mode = settings.get("reasoning_mode", "auto").lower()
         if mode not in REASONING_MODES:
-            mode = "deep"
+            mode = "auto"
         return mode
 
     @classmethod
@@ -233,9 +249,68 @@ class FleetCoordinator:
             return True
         return False
 
+    @classmethod
+    def _classify_prompt_complexity(cls, prompt: str, is_chain: bool = False) -> str:
+        """
+        Classifies prompt into 'fast', 'balanced', or 'deep' based on intent, complexity, and length.
+        """
+        # Sequential multi-node chains require deep synthesis
+        if is_chain:
+            return "deep"
+
+        p = prompt.strip().lower()
+        words = p.split()
+        word_count = len(words)
+        char_count = len(p)
+
+        # Keywords triggering Deep Reasoning (High effort / 600s)
+        deep_keywords = [
+            "arsitektur", "rancang", "desain", "perancangan", "topologi", "skema",
+            "analisis", "analisa", "evaluasi", "investigasi", "mengapa", "kenapa",
+            "bagaimana cara", "solusi", "rekomendasi", "optimasi", "optimisasi",
+            "cctv", "shinobi", "webrtc", "rtsp", "v380", "cluster", "tailscale",
+            "reverse proxy", "coolify", "storage", "rclone", "benchmark",
+            "troubleshoot", "debug", "vulnerability", "keamanan", "bottleneck",
+            "eksekusi", "implementasi", "komprehensif", "menyeluruh", "bandingkan"
+        ]
+        if any(k in p for k in deep_keywords) or word_count >= 25 or char_count >= 160:
+            return "deep"
+
+        # Keywords triggering Fast (Low effort / 180s)
+        light_keywords = [
+            "cek", "status", "spek", "spesifikasi", "ram", "disk", "memori", "cpu",
+            "ip", "online", "uptime", "versi", "version", "port", "load", "ping",
+            "tes", "test", "halo", "hai", "pagi", "siang", "sore", "malam",
+            "siapa kamu", "bisa apa", "help", "bantuan", "info"
+        ]
+        if (word_count <= 12 and char_count <= 80) and any(k in p for k in light_keywords):
+            return "fast"
+
+        # Default fallback for moderate complexity queries
+        return "balanced"
+
+    @classmethod
+    def _resolve_effective_mode(cls, active_mode: str, prompt: str, is_chain: bool = False) -> Tuple[str, Dict[str, Any]]:
+        """
+        Resolves the final concrete mode ('fast', 'balanced', or 'deep').
+        If active_mode is 'auto', dynamically determines the mode from prompt complexity.
+        """
+        resolved_name = active_mode
+        if active_mode == "auto":
+            resolved_name = cls._classify_prompt_complexity(prompt, is_chain=is_chain)
+
+        cfg = REASONING_MODES.get(resolved_name, REASONING_MODES["deep"])
+        return resolved_name, cfg
+
     @staticmethod
     def _build_mode_keyboard(current_mode: str) -> InlineKeyboardMarkup:
         kb = [
+            [
+                InlineKeyboardButton(
+                    text=f"{'🔘' if current_mode == 'auto' else '⚪'} 🤖 Auto (Smart Detection)",
+                    callback_data="fleet_mode:auto"
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text=f"{'🔘' if current_mode == 'fast' else '⚪'} ⚡ Fast (Low)",
@@ -257,26 +332,28 @@ class FleetCoordinator:
 
     @classmethod
     def _format_mode_text(cls, current_mode: str) -> str:
-        cur_cfg = REASONING_MODES.get(current_mode, REASONING_MODES["deep"])
+        cur_cfg = REASONING_MODES.get(current_mode, REASONING_MODES["auto"])
         lines = [
             "⚙️ *PENGATURAN MODE PENALARAN & MODEL*",
             "Sesuaikan tingkat kedalaman berpikir (_reasoning effort_) dan model AI untuk seluruh node fleet:\n",
+            "• 🤖 *Auto (Smart Detection)*: Deteksi cerdas (ringan -> Low, sedang -> Medium, berat/arsitektur -> High)",
             "• 🧠 *Deep Reasoning (High)*: `gemini-3.8-flash-high` | effort: high | timeout: 600s (10m)",
             "• ⚖️ *Balanced (Medium)*: `gemini-3.8-flash-medium` | effort: medium | timeout: 300s (5m)",
             "• ⚡ *Fast (Low)*: `gemini-3.8-flash-low` | effort: low | timeout: 180s (3m)\n",
             f"Mode aktif saat ini: *{cur_cfg['label']}*",
             f"_{cur_cfg['desc']}_\n",
-            "💡 _Tip: Anda juga dapat menimpa mode secara instan per pesan dengan menyertakan flag `--fast`, `--deep`, atau `--balanced`._"
+            "💡 _Tip: Anda juga dapat menimpa mode secara instan per pesan dengan menyertakan flag `--auto`, `--fast`, `--deep`, atau `--balanced`._"
         ]
         return "\n".join(lines)
 
     @classmethod
     def _extract_mode_override(cls, text: str) -> Tuple[Optional[str], str]:
         """
-        Extracts inline flags like --fast, --deep, --balanced, --low, --high, --medium
+        Extracts inline flags like --auto, --fast, --deep, --balanced, --low, --high, --medium
         and returns (override_mode, cleaned_text).
         """
         patterns = [
+            (r"(?:^|\s)--(auto|pintar|smart)(?:\s|$)", "auto"),
             (r"(?:^|\s)--(fast|cepat|low)(?:\s|$)", "fast"),
             (r"(?:^|\s)--(deep|dalam|high)(?:\s|$)", "deep"),
             (r"(?:^|\s)--(balanced|sedang|medium)(?:\s|$)", "balanced"),
@@ -304,6 +381,7 @@ class FleetCoordinator:
                 return
 
             alias_map = {
+                "auto": "auto", "smart": "auto", "pintar": "auto",
                 "fast": "fast", "low": "fast", "cepat": "fast",
                 "balanced": "balanced", "medium": "balanced", "sedang": "balanced",
                 "deep": "deep", "high": "deep", "dalam": "deep"
@@ -312,6 +390,14 @@ class FleetCoordinator:
                 chosen = alias_map[sub]
                 self._set_reasoning_mode(chosen)
                 cfg = REASONING_MODES[chosen]
+                desc_extra = f"\n\n_{cfg['desc']}_"
+                model_info = f"\n• Model: `{cfg['model']}`\n• Effort: `{cfg['effort']}`\n• Timeout: `{cfg['timeout_sec']}s`" if chosen != "auto" else ""
+                await self.dlp.send_safe_message(
+                    self.bot, message.chat.id,
+                    f"✅ Mode penalaran fleet diubah ke: *{cfg['label']}*{model_info}{desc_extra}",
+                    topic_id=message.message_thread_id
+                )
+                return
                 await self.dlp.send_safe_message(
                     self.bot, message.chat.id,
                     f"✅ Mode penalaran fleet diubah ke: *{cfg['label']}*\n\n"
@@ -576,11 +662,14 @@ class FleetCoordinator:
         target_nodes, cleaned_prompt = self._parse_target_nodes(user_prompt)
         mode_override, cleaned_prompt = self._extract_mode_override(cleaned_prompt)
 
-        active_mode = mode_override or self._get_active_reasoning_mode()
-        mode_cfg = REASONING_MODES.get(active_mode, REASONING_MODES["deep"])
+        is_chain = self._is_chain_request(cleaned_prompt, target_nodes, raw_text=user_prompt)
+        raw_mode = mode_override or self._get_active_reasoning_mode()
+        effective_mode_name, mode_cfg = self._resolve_effective_mode(raw_mode, cleaned_prompt, is_chain=is_chain)
+
         active_model = mode_cfg["model"]
         active_effort = mode_cfg["effort"]
         active_timeout = int(mode_cfg["timeout_sec"])
+        mode_indicator = f"Auto: {mode_cfg['label']}" if raw_mode == "auto" else mode_cfg["label"]
 
         await self.presence.update_presence()
 
@@ -593,7 +682,7 @@ class FleetCoordinator:
         project_id = str(message.message_thread_id or message.chat.id)
 
         # Single progress message auto-edited during execution
-        prog_msg = await message.reply("⏳ _Memproses permintaan via Antigravity Fleet..._")
+        prog_msg = await message.reply(f"⏳ _Memproses permintaan via Antigravity Fleet ({mode_indicator})..._")
 
         try:
             # 1. Gather live node facts in parallel or chain
@@ -609,7 +698,11 @@ class FleetCoordinator:
 
                 consult_subj = SUBJECT_NODE_CONSULT.format(node_id=node_id)
                 active_conv_id = self.conv_mgr.get_conversation_id(node_id)
-                effective_prompt = prompt_override or f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
+                effective_prompt = prompt_override or (
+                    f"[PRESENCE CONTEXT: {presence_context}]\n"
+                    f"{FACTS_AND_DATA_INSTRUCTION}\n\n"
+                    f"User query: {cleaned_prompt}"
+                )
 
                 req_data = {
                     "prompt": effective_prompt,
@@ -674,10 +767,15 @@ class FleetCoordinator:
                         await self._safe_edit_message(prog_msg, display_text)
 
                         # Prepare prompt with previous node's answer as context
-                        node_prompt = f"[PRESENCE CONTEXT: {presence_context}]\nUser query: {cleaned_prompt}"
+                        node_prompt = (
+                            f"[PRESENCE CONTEXT: {presence_context}]\n"
+                            f"{FACTS_AND_DATA_INSTRUCTION}\n\n"
+                            f"User query: {cleaned_prompt}"
+                        )
                         if prev_response:
                             node_prompt = (
                                 f"[PRESENCE CONTEXT: {presence_context}]\n"
+                                f"{FACTS_AND_DATA_INSTRUCTION}\n\n"
                                 f"[KONTEKS RESPONS SEBELUMNYA DARI `{prev_node}`]:\n{prev_response}\n\n"
                                 f"[INSTRUKSI / PERTANYAAN LANJUTAN UNTUK KAMU `{nid}`]:\n{cleaned_prompt}"
                             )
@@ -695,7 +793,8 @@ class FleetCoordinator:
                     display_text, exceeds, full_redacted = self._build_multi_node_preview(
                         header=header,
                         target_nodes=target_nodes,
-                        results=completed_results
+                        results=completed_results,
+                        mode_label=mode_indicator
                     )
                     await self._safe_edit_message(prog_msg, display_text)
                     if exceeds:
@@ -734,7 +833,8 @@ class FleetCoordinator:
                                 display_text, exceeds, full_redacted = self._build_multi_node_preview(
                                     header=header,
                                     target_nodes=target_nodes,
-                                    results=completed_results
+                                    results=completed_results,
+                                    mode_label=mode_indicator
                                 )
                             else:
                                 lines = [header + "\n"]
@@ -816,7 +916,7 @@ class FleetCoordinator:
             logger.error(f"Error processing chat message: {e}")
             await self._safe_edit_message(prog_msg, f"❌ Terjadi kesalahan saat memproses permintaan: `{str(e)}`")
 
-    def _format_node_result(self, nid: str, res: Dict[str, Any]) -> str:
+    def _format_node_result(self, nid: str, res: Dict[str, Any], mode_label: Optional[str] = None) -> str:
         """Format individual node result for Telegram rendering."""
         agy_info = res.get("agy", {})
         if "stdout" in res and res["stdout"]:
@@ -830,7 +930,8 @@ class FleetCoordinator:
             if conv_info:
                 turn_c = conv_info.get("turn_count", 1)
                 tok = conv_info.get("total_tokens", 0)
-                footer = f"\n\n_💬 Sesi `{nid}`: Turn {turn_c}/{self.conv_mgr.max_turns} | ~{tok//1000}k tokens_"
+                mode_str = f" | {mode_label}" if mode_label else ""
+                footer = f"\n\n_💬 Sesi `{nid}`: Turn {turn_c}/{self.conv_mgr.max_turns} | ~{tok//1000}k tokens{mode_str}_"
             rot_text = f"\n🔄 _Konteks percakapan di `{nid}` telah penuh dan di-refresh otomatis._" if res.get("_rotated") else ""
             return f"🤖 *Node `{nid}`:*\n{ans}{footer}{rot_text}"
         elif agy_info.get("error"):
@@ -846,7 +947,8 @@ class FleetCoordinator:
         target_nodes: List[str],
         results: Dict[str, Dict[str, Any]],
         max_len: int = 3500,
-        target_preview_len: int = 2800
+        target_preview_len: int = 2800,
+        mode_label: Optional[str] = None
     ) -> Tuple[str, bool, str]:
         """
         Builds a balanced Telegram preview ensuring every node has visibility in chat
@@ -856,7 +958,7 @@ class FleetCoordinator:
         full_lines = [header + "\n"]
         for nid in target_nodes:
             if nid in results:
-                full_lines.append(self._format_node_result(nid, results[nid]))
+                full_lines.append(self._format_node_result(nid, results[nid], mode_label=mode_label))
         full_unclipped = "\n\n".join(full_lines)
         full_redacted = self.dlp.redactor.redact(full_unclipped)
 
@@ -870,7 +972,7 @@ class FleetCoordinator:
         preview_lines = [header + "\n"]
         for nid in target_nodes:
             if nid in results:
-                formatted = self._format_node_result(nid, results[nid])
+                formatted = self._format_node_result(nid, results[nid], mode_label=mode_label)
                 if len(formatted) > per_node_limit:
                     cut = formatted[:per_node_limit].rfind("\n")
                     if cut < per_node_limit // 2:
@@ -878,8 +980,7 @@ class FleetCoordinator:
                     snippet = formatted[:cut].rstrip()
                     if snippet.count("```") % 2 != 0:
                         snippet += "\n```"
-                    snippet += "\n\n_...(inti tanggapan, penjelasan lengkap ada di file .md)_"
-                    preview_lines.append(snippet)
+                    preview_lines.append(f"{snippet}\n\n_...(inti tanggapan, penjelasan lengkap ada di file .md)_")
                 else:
                     preview_lines.append(formatted)
 

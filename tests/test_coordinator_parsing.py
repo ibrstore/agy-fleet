@@ -92,6 +92,11 @@ def test_build_multi_node_preview(coordinator):
 
 
 def test_extract_mode_override():
+    # Test --auto / --smart
+    m, rest = FleetCoordinator._extract_mode_override("cek status disk --auto")
+    assert m == "auto"
+    assert rest == "cek status disk"
+
     # Test --fast / --low
     m, rest = FleetCoordinator._extract_mode_override("cek status disk --fast")
     assert m == "fast"
@@ -121,13 +126,51 @@ def test_extract_mode_override():
     assert rest == "halo selamat pagi"
 
 
+def test_classify_prompt_complexity():
+    # Light prompts -> fast
+    assert FleetCoordinator._classify_prompt_complexity("cek ram") == "fast"
+    assert FleetCoordinator._classify_prompt_complexity("status disk") == "fast"
+    assert FleetCoordinator._classify_prompt_complexity("halo selamat pagi") == "fast"
+    assert FleetCoordinator._classify_prompt_complexity("port berapa yg kebuka") == "fast"
+
+    # Deep prompts -> deep
+    assert FleetCoordinator._classify_prompt_complexity("analisa arsitektur cctv shinobi") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("bagaimana cara rancang cluster docker tailscale") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("troubleshoot error webrtc streaming") == "deep"
+    assert FleetCoordinator._classify_prompt_complexity("halo", is_chain=True) == "deep"
+
+    # Moderate prompts -> balanced
+    assert FleetCoordinator._classify_prompt_complexity("apa perbedaan konfigurasi linux dan windows") == "balanced"
+
+
+def test_resolve_effective_mode():
+    # Explicit mode deep
+    name, cfg = FleetCoordinator._resolve_effective_mode("deep", "cek ram")
+    assert name == "deep"
+    assert cfg["model"] == "gemini-3.8-flash-high"
+
+    # Auto mode resolves light to fast
+    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "cek ram")
+    assert name == "fast"
+    assert cfg["model"] == "gemini-3.8-flash-low"
+    assert cfg["effort"] == "low"
+    assert cfg["timeout_sec"] == 180
+
+    # Auto mode resolves heavy to deep
+    name, cfg = FleetCoordinator._resolve_effective_mode("auto", "rancang arsitektur video stream cctv")
+    assert name == "deep"
+    assert cfg["model"] == "gemini-3.8-flash-high"
+    assert cfg["effort"] == "high"
+    assert cfg["timeout_sec"] == 600
+
+
 def test_reasoning_mode_persistence(tmp_path, monkeypatch):
     test_settings_file = tmp_path / "settings.json"
     monkeypatch.setattr("orchestrator.coordinator.SETTINGS_DIR", tmp_path)
     monkeypatch.setattr("orchestrator.coordinator.SETTINGS_FILE", test_settings_file)
 
-    # Initially defaults to deep
-    assert FleetCoordinator._get_active_reasoning_mode() == "deep"
+    # Initially defaults to auto
+    assert FleetCoordinator._get_active_reasoning_mode() == "auto"
 
     # Set to fast
     assert FleetCoordinator._set_reasoning_mode("fast") is True
@@ -137,18 +180,30 @@ def test_reasoning_mode_persistence(tmp_path, monkeypatch):
     assert FleetCoordinator._set_reasoning_mode("balanced") is True
     assert FleetCoordinator._get_active_reasoning_mode() == "balanced"
 
+    # Set to deep
+    assert FleetCoordinator._set_reasoning_mode("deep") is True
+    assert FleetCoordinator._get_active_reasoning_mode() == "deep"
+
+    # Set to auto
+    assert FleetCoordinator._set_reasoning_mode("auto") is True
+    assert FleetCoordinator._get_active_reasoning_mode() == "auto"
+
     # Invalid mode returns False and doesn't overwrite
     assert FleetCoordinator._set_reasoning_mode("invalid_mode") is False
-    assert FleetCoordinator._get_active_reasoning_mode() == "balanced"
+    assert FleetCoordinator._get_active_reasoning_mode() == "auto"
 
 
 def test_mode_keyboard_and_text():
-    kb = FleetCoordinator._build_mode_keyboard("deep")
-    assert len(kb.inline_keyboard) == 2
-    # Check deep has checked radio button
-    assert "🔘" in kb.inline_keyboard[1][0].text
-    assert "fleet_mode:deep" == kb.inline_keyboard[1][0].callback_data
+    kb = FleetCoordinator._build_mode_keyboard("auto")
+    assert len(kb.inline_keyboard) == 3
+    # Check auto has checked radio button in row 0
+    assert "🔘" in kb.inline_keyboard[0][0].text
+    assert "fleet_mode:auto" == kb.inline_keyboard[0][0].callback_data
 
-    txt = FleetCoordinator._format_mode_text("deep")
+    kb_deep = FleetCoordinator._build_mode_keyboard("deep")
+    assert "🔘" in kb_deep.inline_keyboard[2][0].text
+    assert "fleet_mode:deep" == kb_deep.inline_keyboard[2][0].callback_data
+
+    txt = FleetCoordinator._format_mode_text("auto")
+    assert "Auto (Smart Detection)" in txt
     assert "Deep Reasoning (High)" in txt
-    assert "gemini-3.8-flash-high" in txt
