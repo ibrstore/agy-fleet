@@ -14,6 +14,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional, Set
+
+# Ensure project root is always in sys.path regardless of execution method
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import nats
 from nats.aio.client import Client as NATSClient
 from nats.js.kv import KeyValue
@@ -323,7 +329,12 @@ class FleetDaemon:
                 # Respawn self with updated code
                 if sys.platform == "win32":
                     import subprocess
-                    subprocess.Popen([sys.executable, "-m", "daemon.agent"], creationflags=0x08000000)
+                    cmd = [sys.executable, "-m", "daemon.agent"]
+                    subprocess.Popen(
+                        cmd,
+                        cwd=str(_PROJECT_ROOT),
+                        creationflags=0x08000000  # CREATE_NO_WINDOW
+                    )
                     os._exit(0)
                 else:
                     if os.getenv("INVOCATION_ID") or os.getenv("JOURNAL_STREAM"):
@@ -363,8 +374,14 @@ def _acquire_pid_lock(node_id: str) -> bool:
             if old_pid != my_pid and psutil.pid_exists(old_pid):
                 proc = psutil.Process(old_pid)
                 if "python" in proc.name().lower():
-                    logger.warning(f"Daemon for node '{node_id}' is already running with PID {old_pid}. Exiting.")
-                    return False
+                    # Wait up to 2 seconds if the old process is currently exiting during respawn
+                    for _ in range(4):
+                        if not psutil.pid_exists(old_pid):
+                            break
+                        time.sleep(0.5)
+                    if psutil.pid_exists(old_pid):
+                        logger.warning(f"Daemon for node '{node_id}' is already running with PID {old_pid}. Exiting.")
+                        return False
         except Exception:
             pass
 
