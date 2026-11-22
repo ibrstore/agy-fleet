@@ -541,7 +541,7 @@ class FleetCoordinator:
                             lines = [header + "\n"]
                             for nid in target_nodes:
                                 if nid in completed_results:
-                                    lines.append(self._format_node_result(nid, completed_results[nid]))
+                                    lines.append(f"✅ *Node `{nid}`:* Analisis selesai.")
                             if pending_nodes:
                                 waiting_str = ", ".join([f"`{n}`" for n in pending_nodes])
                                 lines.append(f"\n⏳ _Menunggu respons dari {waiting_str}..._")
@@ -658,11 +658,12 @@ class FleetCoordinator:
         header: str,
         target_nodes: List[str],
         results: Dict[str, Dict[str, Any]],
-        max_len: int = 3500
+        max_len: int = 3500,
+        target_preview_len: int = 2800
     ) -> Tuple[str, bool, str]:
         """
-        Builds a balanced Telegram preview ensuring every node has visibility in chat,
-        while generating the complete, unclipped markdown for file attachment.
+        Builds a balanced Telegram preview ensuring every node has visibility in chat
+        strictly under 3000 characters, while generating the complete, unclipped markdown for file attachment.
         """
         # Full text without any clipping
         full_lines = [header + "\n"]
@@ -675,9 +676,9 @@ class FleetCoordinator:
         if len(full_redacted) <= max_len:
             return full_redacted, False, full_redacted
 
-        # Balanced preview per node
+        # Balanced preview per node strictly under target_preview_len (<3000 chars)
         num_nodes = len([n for n in target_nodes if n in results]) or 1
-        per_node_limit = max(400, (max_len - 500) // num_nodes)
+        per_node_limit = max(350, (target_preview_len - 500) // num_nodes)
 
         preview_lines = [header + "\n"]
         for nid in target_nodes:
@@ -690,12 +691,16 @@ class FleetCoordinator:
                     snippet = formatted[:cut].rstrip()
                     if snippet.count("```") % 2 != 0:
                         snippet += "\n```"
-                    snippet += "\n\n_...(lanjutan lengkap node ini ada di file .md terlampir)_"
+                    snippet += "\n\n_...(inti tanggapan, penjelasan lengkap ada di file .md)_"
                     preview_lines.append(snippet)
                 else:
                     preview_lines.append(formatted)
 
-        preview_lines.append(f"\n📄 _Output dipotong karena batas Telegram ({max_len} karakter). Dokumen lengkap dilampirkan di bawah (.md)_")
+        preview_lines.append(
+            "\n📄 _Hasil pembahasan lengkap melebihi 3.500 karakter. "
+            "Teks di atas merupakan rangkuman inti di bawah 3.000 karakter. "
+            "Silakan buka file dokumen (.md) terlampir untuk penjelasan dan konfigurasi lengkapnya._"
+        )
         preview_text = self.dlp.redactor.redact("\n\n".join(preview_lines))
         return preview_text, True, full_redacted
 
